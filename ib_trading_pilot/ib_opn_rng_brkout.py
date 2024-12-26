@@ -8,13 +8,15 @@ from ibapi.wrapper import EWrapper
 from ibapi.contract import Contract
 from ibapi.order import Order
 from ibapi.execution import *
+from ibapi.scanner import *
 import pandas as pd
 import time
 import threading
+import os
 
 ib_acct = "DU8057891"  # update the ib account (different from real account and paper account)
 tickers = ["AMD"]  # pick tickers with highest gap up or gap down
-pos_size = 10
+pos_size = 100000
 profit_limit = 1000
 loss_limit = -500
 
@@ -124,8 +126,14 @@ class TradeApp(EWrapper, EClient):
         
     def tickerAllOpenOrders(self,ticker):
         return len(self.order_df[self.order_df["Symbol"]==ticker])
-        
-        
+
+    def scannerParameters(self, xml: str):
+        log_directory = os.path.join(os.path.dirname(__file__), 'log')
+        os.makedirs(log_directory, exist_ok=True)
+        open('log/scanner.xml', 'w').write(xml)
+        print("ScannerParameters received.")
+
+
 # this function declares the properties of the instrument.
 def usStk(symbol,sec_type="STK", currency="USD", exchange="ISLAND"):
     contract = Contract()
@@ -202,7 +210,7 @@ def execRefresh(app):
                                       'AvPrice', 'cumQty', 'OrderRef'])  
     app.reqExecutions(21, ExecutionFilter())
     time.sleep(2)
-    
+
 def kill_switch(app):
         print("Kill Switch Activated!! Total day Pnl = {}".format(sum(app.pos_pnl.values())))
         app.reqGlobalCancel()
@@ -219,6 +227,7 @@ def kill_switch(app):
             order_id+=1
         print("Program Shutting Down!!")
         # exit()
+
 def fetchHistorical(app):
     starttime = time.time()
     first_pass = True
@@ -292,6 +301,15 @@ def openRangeBrkout(app):
                             
         time.sleep(15)
 
+# not used for the openrangeBreakout strategy. Just a simple scanner example.
+def usStkScan(asset_type="STK",asset_loc="STK.NASDAQ",scan_code="HIGH_OPEN_GAP"):
+    scan_obj = ScannerSubscription()
+    scan_obj.numberOfRows = 10
+    scan_obj.instrument = asset_type
+    scan_obj.locationCode = asset_loc
+    scan_obj.scanCode = scan_code
+    return scan_obj
+
 
 # function to establish the websocket connection to TWS
 def connection():
@@ -303,6 +321,8 @@ app.connect(host='127.0.0.1', port=7497, clientId=23)  # port 4002 for ib gatewa
 
 ConThread = threading.Thread(target=connection)
 ConThread.start()
+
+app.reqScannerParameters()
 
 kill_event = threading.Event()
 ticker_event = threading.Event()
