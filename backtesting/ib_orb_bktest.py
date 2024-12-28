@@ -101,11 +101,11 @@ for ticker in tickers:
 #extract and store historical data in dataframe
 historicalData = dataDataframe(tickers,app)
 data = deepcopy(historicalData)
+
 for hd in data:
     data[hd]["Gap"] = ((data[hd]["Open"]/data[hd]["Close"].shift(1))-1)*100
     data[hd]["AvVol"] = data[hd]["Volume"].rolling(5).mean().shift(1)
     data[hd].dropna(inplace=True)
-
 
 def topGap(data):
     top_gap_by_date = {}
@@ -133,7 +133,7 @@ def backtest(top_gap_by_date, data, app):
             ticker_event.wait()
 
             if app.skip == False:
-                time.sleep(5)
+                time.sleep(3.5)
                 hi_price = app.data[reqID].iloc[0]['High']
                 lo_price = app.data[reqID].iloc[0]['Low']
                 open_price = ''

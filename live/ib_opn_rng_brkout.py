@@ -135,7 +135,7 @@ class TradeApp(EWrapper, EClient):
     def scannerParameters(self, xml: str):
         log_directory = os.path.join(os.path.dirname(__file__), 'log')
         os.makedirs(log_directory, exist_ok=True)
-        open('log/scanner.xml', 'w').write(xml)
+        open('../log/scanner.xml', 'w').write(xml)
         print("ScannerParameters received.")
 
 
