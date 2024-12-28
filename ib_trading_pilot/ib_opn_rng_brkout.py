@@ -5,7 +5,7 @@ IB API - Opening Range Breakout strategy implementation
 
 from ibapi.client import EClient
 from ibapi.wrapper import EWrapper
-from ibapi.contract import Contract
+from ibapi.contract import Contract, ContractDetails
 from ibapi.order import Order
 from ibapi.execution import *
 from ibapi.scanner import *
@@ -78,6 +78,11 @@ class TradeApp(EWrapper, EClient):
         ticker_event.set()
         if reqId == len(tickers) - 1:
             hist_event.clear()
+
+    def scannerData(self, reqId:int, rank:int, contractDetails:ContractDetails,
+                     distance:str, benchmark:str, projection:str, legsStr:str):
+        super().scannerData(reqId, rank, contractDetails, distance, benchmark, projection, legsStr)
+        print("ScannerData. ReqId:", reqId, ScanData(contractDetails.contract, rank, distance, benchmark, projection, legsStr))
 
 # wrapper function for reqPositions.   this function gives the current positions
     def position(self, account, contract, position, avgCost):
@@ -301,7 +306,7 @@ def openRangeBrkout(app):
                             
         time.sleep(15)
 
-# not used for the openrangeBreakout strategy. Just a simple scanner example.
+# not used for the openrangeBreakout strategy. Just a simple scanner example. called through app.reqScannerParameters()
 def usStkScan(asset_type="STK",asset_loc="STK.NASDAQ",scan_code="HIGH_OPEN_GAP"):
     scan_obj = ScannerSubscription()
     scan_obj.numberOfRows = 10
@@ -309,6 +314,7 @@ def usStkScan(asset_type="STK",asset_loc="STK.NASDAQ",scan_code="HIGH_OPEN_GAP")
     scan_obj.locationCode = asset_loc
     scan_obj.scanCode = scan_code
     return scan_obj
+
 
 
 # function to establish the websocket connection to TWS
@@ -322,7 +328,10 @@ app.connect(host='127.0.0.1', port=7497, clientId=23)  # port 4002 for ib gatewa
 ConThread = threading.Thread(target=connection)
 ConThread.start()
 
-app.reqScannerParameters()
+app.reqScannerSubscription(20,usStkScan(), [], [])
+#app.cancelScannerSubscription(20)
+
+
 
 kill_event = threading.Event()
 ticker_event = threading.Event()
