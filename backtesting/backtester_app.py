@@ -30,6 +30,7 @@ class BacktesterApp(EWrapper, EClient):
 
         # Threading event used to signal that a ticker's data request is complete
         self.ticker_event = threading.Event()
+        self.currentReqId = 0
 
         # Start the IB connection in a background thread
         self.connect_and_start()
@@ -58,12 +59,15 @@ class BacktesterApp(EWrapper, EClient):
             self.skip = True
             print(f"Skipping calculations for reqId: {reqId}")
             self.ticker_event.set()
+        self.currentReqId +=1
+
 
     def historicalData(self, reqId, bar):
         """
         Callback for each bar of historical data.
         We'll store it in a pandas DataFrame in self.data[reqId].
         """
+        self.currentReqId += 1
         if reqId not in self.data:
             # Create initial DataFrame
             self.data[reqId] = pd.DataFrame([{
@@ -100,6 +104,7 @@ class BacktesterApp(EWrapper, EClient):
         self.ticker_event.set()
 
 
+# function for contract creation appropriate for IBKR client. contract is essentially the product we are trading on.
 def usTechStk(symbol, sec_type="STK", currency="USD", exchange="ISLAND"):
     """
     Helper function for creating a US Stock Contract.

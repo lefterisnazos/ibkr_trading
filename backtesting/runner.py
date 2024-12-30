@@ -1,14 +1,14 @@
 # main.py
 
 from backtester_app import BacktesterApp
+from backtesting.strategies.OpenRangeBreakout import OpenRangeBreakout
 from backtester import Backtester
-from strategies.OpenRangeBreakout import OpenRangeBreakout
 
 if __name__ == "__main__":
     # 1) Initialize IB connection environment
     app = BacktesterApp(host='127.0.0.1', port=7497, clientId=24)
 
-    # 2) Define tickers
+    # 2) Define ticker universe
     tickers = ["AAPL", "TSLA", "IBKR"]
 
     # 3) Create the strategy

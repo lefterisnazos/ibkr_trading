@@ -1,3 +1,5 @@
+# benchmarks.py
+
 import pandas as pd
 
 class EvaluationMetric:
@@ -9,7 +11,6 @@ class EvaluationMetric:
         raise NotImplementedError("Subclasses must implement this method.")
 
 
-
 class AbsoluteReturnEvaluation(EvaluationMetric):
     """
     Computes total cumulative return from the date_stats dictionary.
@@ -18,7 +19,8 @@ class AbsoluteReturnEvaluation(EvaluationMetric):
     def compute(self, date_stats):
         df = pd.DataFrame(date_stats).T  # columns = tickers, index = date
         df["ret"] = 1 + df.mean(axis=1)   # daily average return
-        cum_ret = (df["ret"].cumprod() - 1)[-1]
+        # cumulative return across all dates
+        cum_ret = (df["ret"].cumprod() - 1).iloc[-1] if len(df) > 0 else 0.0
         return cum_ret
 
 
