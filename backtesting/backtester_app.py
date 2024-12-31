@@ -21,6 +21,7 @@ class BacktesterApp(EWrapper, EClient):
         self.host = host
         self.port = port
         self.clientId = clientId
+        self.thread = None
 
         # Dictionary to store data: {reqId: DataFrame of bars}
         self.data = {}
@@ -29,11 +30,13 @@ class BacktesterApp(EWrapper, EClient):
         self.skip = False
 
         # Threading event used to signal that a ticker's data request is complete
+
         self.ticker_event = threading.Event()
         self.currentReqId = 0
 
         # Start the IB connection in a background thread
         self.connect_and_start()
+
 
     def connect_and_start(self):
         """
@@ -42,11 +45,11 @@ class BacktesterApp(EWrapper, EClient):
         self.connect(self.host, self.port, self.clientId)
 
         # The EClient.run() method processes incoming messages
-        thread = threading.Thread(target=self.run, daemon=True)
-        thread.start()
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread.start()
 
         # Give it a moment to establish connection
-        time.sleep(1)
+        time.sleep(4)
 
     def error(self, reqId, errorCode, errorString, advancedOrderRejectJson=''):
         """

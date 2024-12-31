@@ -5,6 +5,10 @@ from typing import Dict, List, Optional
 
 class BaseStrategy:
 
+    def __init__(self):
+        self.start_date = None
+        self.end_date = None
+
 
     def prepare_data(self, app, tickers) -> Dict[str, pd.DataFrame]:
         """

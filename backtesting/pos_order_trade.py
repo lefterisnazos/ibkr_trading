@@ -1,5 +1,5 @@
 
-
+# Order not used current for the backtester. Only Position & Trade are needed
 class Order:
     """
     Represents an Order to buy or sell a contract at a specific (or market) price.
@@ -73,9 +73,9 @@ class Position:
             raise ValueError("Cannot reduce a position with a trade of the same side.")
         # Realized PnL depends on side
         if self.side == "B":  # long
-            trade.realized_pnl = (trade.price - self.avg_price) * min(self.volume, trade.volume)
+            realized_pnl = (trade.price - self.avg_price) * min(self.volume, trade.volume)
         else:  # short
-            trade.realized_pnl = (self.avg_price - trade.price) * min(self.volume, trade.volume)
+            realized_pnl = (self.avg_price - trade.price) * min(self.volume, trade.volume)
 
         # If trade volume > position volume => flipping side
         if trade.volume > self.volume:
@@ -89,6 +89,7 @@ class Position:
             self.volume -= trade.volume
 
         self.last_update = trade.timestamp
+        trade.realized_pnl = realized_pnl
 
     def is_open(self):
         return self.volume > 0

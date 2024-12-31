@@ -3,24 +3,31 @@
 from backtester_app import BacktesterApp
 from backtesting.strategies.OpenRangeBreakout import OpenRangeBreakout
 from backtester import Backtester
+import datetime as dt
 
 if __name__ == "__main__":
     # 1) Initialize IB environment
-    app = BacktesterApp(host='127.0.0.1', port=7497, clientId=24)
+    app = BacktesterApp(host='127.0.0.1', port=7497, clientId=25)
 
     # 2) Define ticker universe
     tickers = ["AAPL", "TSLA", "IBKR"]
 
-    # 3) Create the strategy
-    strategy = OpenRangeBreakout()
+    # 3) Start & end date for backtest
+    start_date = dt.datetime(2023, 1, 1)
+    end_date = dt.datetime(2023, 6, 1)
 
-    # 4) Create & run backtester
-    backtester = Backtester(strategy=strategy, app=app, tickers=tickers)
+    # 4) Instantiate the strategy
+    strategy = OpenRangeBreakout(start_date, end_date)
+
+    # 5) Instantiate the backtester with date range
+    backtester = Backtester(
+        strategy=strategy,
+        app=app,
+        tickers=tickers
+    )
+
+    # 6) Run the backtest
     backtester.run()
 
-    # 5) Evaluate
-    backtester.evaluate()
-
-    # You can also retrieve the trades DataFrame:
-    trades_df = backtester.trades_df
-    # do further analysis, e.g. trades_df.to_csv("trades_log.csv")
+    # 7) Evaluate results
+    stats = backtester.evaluate()

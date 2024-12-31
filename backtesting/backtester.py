@@ -1,8 +1,8 @@
 # backtester.py
-
 import time
 import pandas as pd
 from typing import Dict, List
+import datetime as dt
 
 # We'll import your metric classes here
 from benchmarks.benchmarks import (
@@ -18,18 +18,26 @@ class Backtester:
         self.strategy = strategy
         self.app = app
         self.tickers = tickers
+
+        # We'll store the daily_data fetched by the strategy
         self.daily_data = None
-        self.final_results = None
+
+        # final_results => {date: {ticker: float_pnl}}
+        self.final_results = {}
+
+        # For logging all trades in a single DataFrame
         self.trades_df = pd.DataFrame()
 
     def run(self):
-        # 1) Let the strategy prepare daily data internally
-        self.strategy.prepare_data(self.app, self.tickers)
+        # 1) Let the strategy prepare daily data
+        #    Returns {ticker: DataFrame} containing Gap/AvVol
+        self.daily_data = self.strategy.prepare_data(self.app, self.tickers)
 
-        # 2) Let the strategy run
-        self.final_results = self.strategy.run_strategy(self.app)
+        # 2) Run the strategy, passing daily_data so the strategy can
+        #    look up Gap, AvVol, etc. while simulating intraday
+        self.final_results = self.strategy.run_strategy(self.app, self.daily_data)
 
-        # 3) Convert trades to a DataFrame
+        # 3) Convert trades to a DataFrame for further analysis
         self.trades_df = self._convert_trades_to_df(self.strategy.trades_log)
 
     def _convert_trades_to_df(self, trades_list):
@@ -53,10 +61,11 @@ class Backtester:
         """
         Evaluate the results using your custom metrics.
         """
-        absolute_ret = AbsoluteReturnEvaluation().compute(self.results)
-        win_rate = WinRateEvaluation().compute(self.results)
-        mean_win = MeanReturnWinner().compute(self.results)
-        mean_loss = MeanReturnLoser().compute(self.results)
+        # Use self.final_results => {date: {ticker: return_float}}
+        absolute_ret = AbsoluteReturnEvaluation().compute(self.final_results)
+        win_rate = WinRateEvaluation().compute(self.final_results)
+        mean_win = MeanReturnWinner().compute(self.final_results)
+        mean_loss = MeanReturnLoser().compute(self.final_results)
 
         print("**********Strategy Performance Statistics**********")
         print(f"Total cumulative return: {round(absolute_ret, 4)}")
