@@ -5,79 +5,49 @@ import pandas as pd
 from typing import Dict, List
 
 # We'll import your metric classes here
-from benchmarks import (
+from benchmarks.benchmarks import (
     AbsoluteReturnEvaluation,
     WinRateEvaluation,
     MeanReturnWinner,
     MeanReturnLoser
 )
 
+
 class Backtester:
     def __init__(self, strategy, app, tickers):
         self.strategy = strategy
         self.app = app
         self.tickers = tickers
-        self.data = None            # daily data from prepare_data
-        self.top_gap_by_date = None # dict of {date: [tickers]}
-        self.results = {}           # final PnL by date, ticker
+        self.daily_data = None
+        self.final_results = None
+        self.trades_df = pd.DataFrame()
 
     def run(self):
+        # 1) Let the strategy prepare daily data internally
+        self.strategy.prepare_data(self.app, self.tickers)
+
+        # 2) Let the strategy run
+        self.final_results = self.strategy.run_strategy(self.app)
+
+        # 3) Convert trades to a DataFrame
+        self.trades_df = self._convert_trades_to_df(self.strategy.trades_log)
+
+    def _convert_trades_to_df(self, trades_list):
         """
-        1) Prepare daily data.
-        2) Determine trade universe by date.
-        3) For each date/ticker, fetch intraday data + simulate intraday logic.
-        4) Store results in self.results.
+        Convert the list of Trade objects to a pandas DataFrame.
         """
-        # 1) Prepare daily data
-        self.data = self.strategy.prepare_data(self.app, self.tickers)
-
-        # 2) Get top-gap or trade universe by date
-        self.top_gap_by_date = self.strategy.get_trade_universe_by_date(self.data)
-
-        # 3) Intraday simulation
-        reqID = 1000
-        for date, gap_list in self.top_gap_by_date.items():
-            self.results[date] = {}
-            for ticker in gap_list:
-                # Request 5-min intraday data for that date
-                self.app.ticker_event.clear()
-                # histData(req_num, contract, endDate, duration, bar_size)
-                self.app.reqHistoricalData(
-                    reqId=reqID,
-                    contract=self.app.usTechStk(ticker),
-                    endDateTime=date + " 22:05:00 US/Eastern",
-                    durationStr='1 D',
-                    barSizeSetting='5 mins',
-                    whatToShow='TRADES',
-                    useRTH=1,
-                    formatDate=1,
-                    keepUpToDate=0,
-                    chartOptions=[]
-                )
-                self.app.ticker_event.wait()
-
-                # If skip => we encountered an IB error, skip this ticker
-                if self.app.skip:
-                    self.app.skip = False
-                    self.results[date][ticker] = 0
-                    reqID += 1
-                    continue
-
-                # small delay so data can buffer in
-                time.sleep(3.0)
-                intraday_data = self.app.data.get(reqID, None)
-
-                # If we have data => simulate
-                if intraday_data is not None and not intraday_data.empty:
-                    intraday_data = intraday_data.reset_index(drop=True)
-                    daily_row = self.data[ticker].loc[date]
-                    pnl = self.strategy.simulate_intraday(intraday_data, daily_row)
-                    self.results[date][ticker] = pnl
-                else:
-                    self.results[date][ticker] = 0
-
-                reqID += 1
-
+        rows = []
+        for tr in trades_list:
+            rows.append({
+                "timestamp":   tr.timestamp,
+                "contract":    tr.contract,
+                "side":        tr.side,
+                "price":       tr.price,
+                "volume":      tr.volume,
+                "realizedPnL": tr.realized_pnl,
+                "comment":     tr.comment
+            })
+        return pd.DataFrame(rows)
     def evaluate(self):
         """
         Evaluate the results using your custom metrics.
