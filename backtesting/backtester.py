@@ -48,6 +48,7 @@ class Backtester:
                 "comment":     tr.comment
             })
         return pd.DataFrame(rows)
+
     def evaluate(self):
         """
         Evaluate the results using your custom metrics.

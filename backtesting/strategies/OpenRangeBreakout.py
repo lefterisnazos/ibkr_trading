@@ -10,8 +10,6 @@ from backtesting.pos_order_trade import Order, Trade, Position
 # from backtester_app import ticker_event, histData, dataDataframe, usTechStk
 # from your_module import BaseStrategy  # whichever path holds the BaseStrategy
 
-from pos_order_trade import Position, Trade
-
 class OpenRangeBreakout(BaseStrategy):
     def __init__(self):
         super().__init__()
