@@ -13,22 +13,22 @@ from backtesting.pos_order_trade import Order, Trade, Position
 class OpenRangeBreakout(BaseStrategy):
     def __init__(self):
         super().__init__()
-        self.daily_data: Dict[str, pd.DataFrame] = {}  # Will store daily data for each ticker
+        self.daily_data: Dict[str, pd.DataFrame] = {}  # {ticker: DataFrame with daily bars}
         self.results: Dict[str, Dict[str, float]] = {} # {date: {ticker: final_pnl}}
-        self.trades_log = []                           # List of all Trade objects
+        self.trades_log = []                           # list of Trade objects
 
-    def prepare_data(self, app, tickers):
+    def prepare_data(self, app: BacktesterApp, tickers: List[str]) -> Dict[str, pd.DataFrame]:
         """
-        1) Request daily data for each ticker
-        2) Build 'Gap' & 'AvVol' columns
+        1) Request daily data from IBKR for each ticker
+        2) Compute 'Gap' & 'AvVol' columns
         3) Store the final DataFrames in self.daily_data
+        4) Return the same dictionary
         """
-        # Request daily data from IBKR
         for idx, ticker in enumerate(tickers):
             app.ticker_event.clear()
             app.reqHistoricalData(
                 reqId=idx,
-                contract=app.usTechStk(ticker),
+                contract=usTechStk(ticker),
                 endDateTime='',
                 durationStr='1 M',
                 barSizeSetting='1 day',
@@ -43,7 +43,7 @@ class OpenRangeBreakout(BaseStrategy):
                 print(f"Skipping daily data for {ticker} due to IB error.")
                 app.skip = False
 
-        # Convert to pandas DataFrames and compute Gap/AvVol
+        # Convert the collected data to DataFrame & compute Gap, AvVol
         for idx, ticker in enumerate(tickers):
             df = app.data.get(idx, None)
             if df is not None and not df.empty:
@@ -57,49 +57,51 @@ class OpenRangeBreakout(BaseStrategy):
                 print(f"No daily data found for {ticker}.")
                 self.daily_data[ticker] = pd.DataFrame()
 
-    def get_trade_universe_by_date(self) -> Dict[str, list]:
+        return self.daily_data
+
+    def get_trade_universe_by_date(self, data: Dict[str, pd.DataFrame]) -> Dict[str, List[str]]:
         """
-        For each date across all tickers, pick the top 5 by Gap.
-        Returns {date_str: [tickers]}
+        For each date, pick the top 5 tickers by Gap.
+        Return {date_str: [tickers]}.
         """
         top_gap_by_date = {}
-        # Gather all dates from all tickers
+        # gather all dates from each ticker's DataFrame
         all_dates = set()
-        for ticker, df in self.daily_data.items():
+        for tkr, df in data.items():
             all_dates.update(df.index.tolist())
 
         all_dates = sorted(list(all_dates))
 
-        for d in all_dates:
+        for date in all_dates:
             gap_dict = {}
-            for tkr, df in self.daily_data.items():
-                if d in df.index:
-                    gap_dict[tkr] = df.loc[d, "Gap"]
-            # sort descending by gap
+            for tkr, df in data.items():
+                if date in df.index:
+                    gap_dict[tkr] = df.loc[date, "Gap"]
+            # sort by descending Gap
             sorted_gap = sorted(gap_dict.items(), key=lambda x: x[1], reverse=True)[:5]
-            top_gap_by_date[d] = [item[0] for item in sorted_gap]
+            top_gap_by_date[date] = [elem[0] for elem in sorted_gap]
 
         return top_gap_by_date
 
-    def run_strategy(self, app):
+    def run_strategy(self, app: BacktesterApp, daily_data: Dict[str, pd.DataFrame]) -> Dict[str, Dict[str, float]]:
         """
-        Orchestrates the entire intraday simulation for each date/ticker in the top-gap universe.
-        1) Get the top-gap tickers by date
-        2) Request intraday data from IBKR
-        3) Simulate intraday bar-by-bar, logging trades, storing final PnL
-        4) Return self.results
+        Orchestrates the intraday backtest:
+          1) get the top-gap tickers by date
+          2) for each date/ticker => request 5-min intraday
+          3) call simulate_intraday(...) => final PnL
+          4) store results
         """
-        top_gap_by_date = self.get_trade_universe_by_date()
+        top_gap_by_date = self.get_trade_universe_by_date(daily_data)
         reqID = 10000
 
         for date, gap_list in top_gap_by_date.items():
             self.results[date] = {}
             for ticker in gap_list:
-                # Request intraday data
+                # request intraday data
                 app.ticker_event.clear()
                 app.reqHistoricalData(
                     reqId=reqID,
-                    contract=app.usTechStk(ticker),
+                    contract=usTechStk(ticker),
                     endDateTime=date + " 22:05:00 US/Eastern",
                     durationStr='1 D',
                     barSizeSetting='5 mins',
@@ -112,6 +114,7 @@ class OpenRangeBreakout(BaseStrategy):
                 app.ticker_event.wait()
 
                 if app.skip:
+                    # if IB error => skip
                     app.skip = False
                     self.results[date][ticker] = 0
                     reqID += 1
@@ -126,26 +129,24 @@ class OpenRangeBreakout(BaseStrategy):
                     continue
 
                 intraday_df = intraday_df.reset_index(drop=True)
-                daily_row = self.daily_data[ticker].loc[date]
+
+                # get the daily row for this date/ticker
+                daily_row = daily_data[ticker].loc[date]
                 final_pnl = self.simulate_intraday(ticker, date, intraday_df, daily_row)
                 self.results[date][ticker] = final_pnl
-
                 reqID += 1
 
         return self.results
 
-    def simulate_intraday(self, ticker, date, intraday_df, daily_row):
+    def simulate_intraday(self, ticker: str, date: str, intraday_df: pd.DataFrame, daily_row: pd.Series) -> float:
         """
-        The core bar-by-bar logic:
-          1) Identify open range (hi_price, lo_price)
-          2) If volume threshold => open position
-          3) Check TP/SL
-          4) Log trades in self.trades_log
-          5) Return final PnL
+        The bar-by-bar open range breakout logic using Position & Trade objects
+        (mirroring your original 'serial' logic but organized).
         """
         if intraday_df.shape[0] < 2:
             return 0.0
 
+        # Pre-market high/low from the first bar
         hi_price = intraday_df.loc[0, "High"]
         lo_price = intraday_df.loc[0, "Low"]
 
@@ -158,63 +159,64 @@ class OpenRangeBreakout(BaseStrategy):
         for i in range(1, len(intraday_df)):
             bar_prev = intraday_df.iloc[i - 1]
             bar_cur = intraday_df.iloc[i]
+            volume = 1
 
-            # Check for breakout if no position
+            # If no position => check breakout (long or short)
             if position is None:
                 if bar_prev["Volume"] > volume_threshold:
-                    # Potential long breakout
+                    # potential long breakout
                     if bar_cur["High"] > hi_price:
                         entry_price = self._entry_slippage(intraday_df, i, side="long")
                         position = Position(
                             contract=ticker,
                             price=entry_price,
-                            volume=100,
-                            side="B",
+                            volume=volume,
+                            side="B",   # "B" => buy/long
                             timestamp=date
                         )
-                        # Log trade
+                        # log opening trade
                         open_trade = Trade(
                             contract=ticker,
                             price=entry_price,
-                            volume=100,
+                            volume=volume,
                             side="B",
                             timestamp=date,
                             comment="Open long breakout"
                         )
                         self.trades_log.append(open_trade)
 
-                    # Potential short breakout
+                    # potential short breakout
                     elif bar_cur["Low"] < lo_price:
                         entry_price = self._entry_slippage(intraday_df, i, side="short")
                         position = Position(
                             contract=ticker,
                             price=entry_price,
-                            volume=100,
-                            side="S",
+                            volume=volume,
+                            side="S",   # "S" => sell/short
                             timestamp=date
                         )
-                        # Log trade
+                        # log opening trade
                         open_trade = Trade(
                             contract=ticker,
                             price=entry_price,
-                            volume=100,
+                            volume=volume,
                             side="S",
                             timestamp=date,
                             comment="Open short breakout"
                         )
                         self.trades_log.append(open_trade)
 
-            # If there's an open position => check TP/SL
+            # If we have a position => check TP/SL
             if position is not None:
                 if position.side == "B":  # long
-                    # TP = 5%
+                    # 5% take profit => if bar_cur["High"] >= hi_price * 1.05
                     if bar_cur["High"] >= hi_price * 1.05:
                         close_price = hi_price * 1.05
                         close_trade = Trade(
                             contract=ticker,
                             price=close_price,
                             volume=position.volume,
-                            side="S",
+                            side="S",  # offset the long
                             timestamp=date,
                             comment="Close long: TP"
                         )
@@ -226,7 +228,7 @@ class OpenRangeBreakout(BaseStrategy):
                             position = None
                         break
 
-                    # SL => if bar_cur["Low"] <= lo_price
+                    # stop-loss => if bar_cur["Low"] <= lo_price
                     elif bar_cur["Low"] <= lo_price:
                         close_price = lo_price
                         close_trade = Trade(
@@ -248,8 +250,8 @@ class OpenRangeBreakout(BaseStrategy):
                         # floating PnL
                         final_return = (bar_cur["Close"] / position.avg_price) - 1
 
-                else:  # short side
-                    # TP => lo_price * 0.95
+                else:  # short
+                    # 5% take profit => if bar_cur["Low"] <= lo_price * 0.95
                     if bar_cur["Low"] <= lo_price * 0.95:
                         close_price = lo_price * 0.95
                         close_trade = Trade(
@@ -268,7 +270,7 @@ class OpenRangeBreakout(BaseStrategy):
                             position = None
                         break
 
-                    # SL => if bar_cur["High"] >= hi_price
+                    # stop-loss => if bar_cur["High"] >= hi_price
                     elif bar_cur["High"] >= hi_price:
                         close_price = hi_price
                         close_trade = Trade(
@@ -292,9 +294,13 @@ class OpenRangeBreakout(BaseStrategy):
 
         return final_return
 
-    def _entry_slippage(self, intraday_df, i, side="long"):
+    def _entry_slippage(self, intraday_df: pd.DataFrame, i: int, side="long") -> float:
         """
-        Example slippage model for the entry.
+        i: exact time that we trade (bar index)
+        Example 'slippage' model for the entry price:
+          - 80% of the next bar's Open
+          - 20% of the next bar's High (for long) or Low (for short)
+          If there's no next bar, we fallback to the current bar's Close.
         """
         if i + 1 < len(intraday_df):
             next_bar = intraday_df.iloc[i + 1]

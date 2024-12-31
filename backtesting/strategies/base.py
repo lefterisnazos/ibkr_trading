@@ -33,7 +33,7 @@ class BaseStrategy:
         """
         raise NotImplementedError("Please implement apply_risk_management() in your derived strategy.")
 
-    def simulate_intraday(self, intraday_data: pd.DataFrame, daily_row: pd.Series) -> float:
+    def simulate_intraday(self, ticker: str, date: str, intraday_df: pd.DataFrame, daily_row: pd.Series) -> float:
         """
         The main logic that uses generate_signals, apply_risk_management,
         or does any other intraday stepping to compute final PnL.

@@ -35,6 +35,12 @@ class Trade:
         return (f"Trade({self.contract}, {self.side}, vol={self.volume}, "
                 f"px={round(self.price, 2)}, PnL={round(self.realized_pnl, 2)})")
 
+    def __str__(self):
+        return (f"Trade({self.contract}, {self.side}, vol={self.volume}, "
+                f"px={round(self.price, 2)}, PnL={round(self.realized_pnl, 2)})")
+
+    def __hash__(self):
+        return hash((self.contract, self.side, self.volume, self.price, self.timestamp)).__hash__()
 
 class Position:
     """
