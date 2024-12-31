@@ -7,7 +7,7 @@ import datetime as dt
 
 if __name__ == "__main__":
     # 1) Initialize IB environment
-    app = BacktesterApp(host='127.0.0.1', port=7497, clientId=25)
+    app = BacktesterApp(host='127.0.0.1', port=7497, clientId=26)
 
     # 2) Define ticker universe
     tickers = ["AAPL", "TSLA", "IBKR"]

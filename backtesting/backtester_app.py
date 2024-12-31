@@ -103,6 +103,22 @@ class BacktesterApp(EWrapper, EClient):
         """
         super().historicalDataEnd(reqId, start, end)
         print(f"HistoricalDataEnd. ReqId: {reqId}, from {start}, to {end}")
+
+        df = self.data.get(reqId, None)
+        if df is not None and not df.empty:
+            # Check the first row's date format
+            date_str = df.iloc[0]["Date"]
+            if " " in date_str:
+                # likely intraday => parse with %Y%m%d  %H:%M:%S
+                df["Date"] = pd.to_datetime(df["Date"], format="%Y%m%d  %H:%M:%S")
+            else:
+                # daily => parse with %Y%m%d
+                df["Date"] = pd.to_datetime(df["Date"], format="%Y%m%d")
+
+            df.set_index("Date", inplace=True)
+            df.sort_index(inplace=True)
+            self.data[reqId] = df
+
         self.skip = False
         self.ticker_event.set()
 

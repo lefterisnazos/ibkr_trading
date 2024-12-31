@@ -34,7 +34,7 @@ class OpenRangeBreakout(BaseStrategy):
             app.ticker_event.clear()
             app.reqHistoricalData(
                 reqId=idx,
-                contract=app.usTechStk(ticker),
+                contract=usTechStk(ticker),
                 endDateTime='',    # IB's 'latest' date
                 durationStr='1 Y', # example: 1 year, or "1 M" ...
                 barSizeSetting='1 day',
