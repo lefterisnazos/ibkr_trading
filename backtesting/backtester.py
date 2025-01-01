@@ -4,14 +4,12 @@ import pandas as pd
 from typing import Dict, List
 import datetime as dt
 
-# We'll import your metric classes here
 from benchmarks.benchmarks import (
     AbsoluteReturnEvaluation,
     WinRateEvaluation,
     MeanReturnWinner,
     MeanReturnLoser
 )
-
 
 class Backtester:
     def __init__(self, strategy, app, tickers):
@@ -30,15 +28,13 @@ class Backtester:
 
     def run(self):
         # 1) Let the strategy prepare daily data
-        #    Returns {ticker: DataFrame} containing Gap/AvVol
         self.daily_data = self.strategy.prepare_data(self.app, self.tickers)
 
-        # 2) Run the strategy, passing daily_data so the strategy can
-        #    look up Gap, AvVol, etc. while simulating intraday
+        # 2) Run the strategy
         self.final_results = self.strategy.run_strategy(self.app, self.daily_data)
 
-        # 3) Convert trades to a DataFrame for further analysis
-        self.trades_df = self._convert_trades_to_df(self.strategy.trades)
+        # 3) Convert the strategy’s trade log to a DataFrame
+        self.trades_df = self._convert_trades_to_df(self.strategy.trades_log)
 
     def _convert_trades_to_df(self, trades_list):
         """
@@ -59,9 +55,8 @@ class Backtester:
 
     def evaluate(self):
         """
-        Evaluate the results using your custom metrics.
+        Evaluate results using your custom metrics.
         """
-        # Use self.final_results => {date: {ticker: return_float}}
         absolute_ret = AbsoluteReturnEvaluation().compute(self.final_results)
         win_rate = WinRateEvaluation().compute(self.final_results)
         mean_win = MeanReturnWinner().compute(self.final_results)
@@ -73,7 +68,6 @@ class Backtester:
         print(f"Mean return (winners)  : {round(mean_win, 4)}")
         print(f"Mean return (losers)   : {round(mean_loss, 4)}")
 
-        # Optionally return a dict if you want to store or log them
         return {
             "absolute_return": absolute_ret,
             "win_rate": win_rate,

@@ -26,11 +26,9 @@ class LinRegSigmaStrategy(BaseStrategy):
         self.start_date = start_date
         self.end_date = end_date
 
-        # Lookback config for the linear regressions
         self.medium_lookback = medium_lookback
         self.long_lookback = long_lookback
 
-        # Store daily data => {ticker: DataFrame with daily bars}
         self.daily_data: Dict[str, pd.DataFrame] = {}
 
         # Final results => {date_str: {ticker: float_pnl}}
@@ -38,13 +36,6 @@ class LinRegSigmaStrategy(BaseStrategy):
         self.positions = []
         self.results: Dict[str, Dict[str, float]] = {}
 
-        # We'll store the last computed LR lines for each ticker:
-        # self.lr_info[ticker] = {
-        #   "med_lr": float,
-        #   "med_sigma": float,
-        #   "long_lr": float,
-        #   "long_sigma": float
-        # }
         self.lr_info = {}
 
     def prepare_data(self, app, tickers: List[str]) -> Dict[str, pd.DataFrame]:
@@ -89,101 +80,67 @@ class LinRegSigmaStrategy(BaseStrategy):
 
         return self.daily_data
 
-    def get_trade_universe_by_date(self, data: Dict[str, pd.DataFrame]) -> Dict[str, List[str]]:
-        """
-        For each date in the union of all daily_data indexes,
-        trade all tickers that have data on that date.
-        Return {date_str: [tickers]}.
-        """
-        all_dates = set()
-        for tkr, df in data.items():
-            all_dates.update(df.index)
-        all_dates = sorted(list(all_dates))
-
-        trade_universe = {}
-        for d in all_dates:
-            date_str = str(d.date())
-            available_tickers = []
-            for tkr, df in data.items():
-                if d in df.index:
-                    available_tickers.append(tkr)
-            trade_universe[date_str] = available_tickers
-
-        return trade_universe
-
     def run_strategy(self, app, daily_data: Dict[str, pd.DataFrame]) -> Dict[str, Dict[str, float]]:
         """
-        Day-by-day iteration. For each date:
-          1) If it's a Friday => recompute LR lines for each ticker that has data
-          2) For each ticker => request intraday 10-min data for that date
-          3) simulate_intraday(ticker, date_str, intraday_df, daily_row)
-
-        We store final PnL in self.results[date_str][ticker].
+        For each ticker in daily_data:
+          1) For each date in daily_data[ticker].index (in chronological order),
+          2) Request intraday data for that date,
+          3) Call simulate_intraday(...) to compute a daily PnL,
+          4) Store in self.results[date_str][ticker].
         """
-        trade_universe = self.get_trade_universe_by_date(daily_data)
-        sorted_dates = sorted(trade_universe.keys())
 
-        reqID = 10000
+        # Ensure self.results is a nested dict => {date_str: {ticker: float_pnl}}
+        # We'll fill it as we go
+        for ticker, df in daily_data.items():
+            if df.empty:
+                continue
 
-        for date_str in sorted_dates:
-            self.results[date_str] = {}
+            # Sort the index just in case
+            df = df.sort_index()
+            dates = df.index
 
-            d_time = pd.to_datetime(date_str)
-            # If Friday => recompute LR lines
-            if d_time.weekday() == 4:  # 4 => Friday
-                for ticker in trade_universe[date_str]:
-                    self._compute_linregs_for_ticker(ticker, d_time)
+            for date in dates:
+                date_str = date.strftime("%Y-%m-%d")
+                # Make sure there's a sub-dict for this date
+                if date_str not in self.results:
+                    self.results[date_str] = {}
 
-            # For each ticker => request intraday data for that date
-            for ticker in trade_universe[date_str]:
+                # Request intraday data for this ticker on `date`
                 app.ticker_event.clear()
 
-                # e.g. "20241209 22:05:00 US/Eastern"
-                end_date_str = date_str + " 22:05:00 US/Eastern"
+                # e.g. "2024-12-09 22:05:00 US/Eastern"
+                end_date_time = date_str + " 22:05:00 US/Eastern"
 
-                app.reqHistoricalData(
-                    reqId=reqID,
-                    contract=app.usTechStk(ticker),
-                    endDateTime=end_date_str,
-                    durationStr='1 D',
-                    barSizeSetting='10 mins',   # 10-min bars
-                    whatToShow='TRADES',
-                    useRTH=1,
-                    formatDate=1,
-                    keepUpToDate=0,
-                    chartOptions=[]
-                )
+                app.reqHistoricalData(reqId=self.next_reqID,  # self.next_reqID is some integer, increment each time
+                    contract=app.usTechStk(ticker), endDateTime=end_date_time, durationStr='1 D', barSizeSetting='5 mins',  # or 10 mins, etc.
+                    whatToShow='TRADES', useRTH=1, formatDate=1, keepUpToDate=0, chartOptions=[])
                 app.ticker_event.wait()
 
                 if app.skip:
+                    # if IB error => skip
                     app.skip = False
                     self.results[date_str][ticker] = 0
-                    reqID += 1
+                    self.next_reqID += 1
                     continue
 
-                time.sleep(1)
-                intraday_df = app.data.get(reqID, None)
+                # small delay
+                time.sleep(1.0)
+
+                intraday_df = app.data.get(self.next_reqID, None)
+                self.next_reqID += 1
+
                 if intraday_df is None or intraday_df.empty:
                     self.results[date_str][ticker] = 0
-                    reqID += 1
                     continue
 
-                # Convert to datetime index if needed
                 intraday_df = intraday_df.reset_index(drop=True)
 
-                # Also retrieve the daily row for that ticker/date
-                df_daily = daily_data[ticker]
-                if d_time not in df_daily.index:
-                    self.results[date_str][ticker] = 0
-                    reqID += 1
-                    continue
-                daily_row = df_daily.loc[d_time]
+                # Retrieve the daily_row for that date
+                daily_row = df.loc[date]
 
-                # Now do bar-by-bar logic
+                # Simulate intraday logic
                 final_pnl = self.simulate_intraday(ticker, date_str, intraday_df, daily_row)
                 self.results[date_str][ticker] = final_pnl
-
-                reqID += 1
 
         return self.results
 
@@ -202,12 +159,7 @@ class LinRegSigmaStrategy(BaseStrategy):
         # long LR
         long_val, long_sigma = self._fit_linreg(df_sub.tail(self.long_lookback))
 
-        self.lr_info[ticker] = {
-            "medium_lr": med_val,
-            "medium_sigma": med_sigma,
-            "long_lr": long_val,
-            "long_sigma": long_sigma
-        }
+        self.lr_info[ticker] = {"medium_lr": med_val, "medium_sigma": med_sigma, "long_lr": long_val, "long_sigma": long_sigma}
 
     def _fit_linreg(self, sub_df: pd.DataFrame) -> (float, float):
         """
@@ -227,13 +179,7 @@ class LinRegSigmaStrategy(BaseStrategy):
         lr_value = intercept + slope * (len(y) - 1)
         return (lr_value, sigma)
 
-    def simulate_intraday(
-        self,
-        ticker: str,
-        date_str: str,
-        intraday_df: pd.DataFrame,
-        daily_row: pd.Series
-    ) -> float:
+    def simulate_intraday(self, ticker: str, date_str: str, intraday_df: pd.DataFrame, daily_row: pd.Series) -> float:
         """
         Bar-by-bar intraday logic:
          - We have medium_lr, long_lr, etc. from self.lr_info[ticker].
@@ -246,6 +192,7 @@ class LinRegSigmaStrategy(BaseStrategy):
         med_sigma = lr_data.get("medium_sigma", None)
         long_lr = lr_data.get("long_lr", None)
         long_sigma = lr_data.get("long_sigma", None)
+
         if any(x is None for x in [med_lr, med_sigma, long_lr, long_sigma]):
             # no LR data => no trades
             return 0.0
@@ -269,7 +216,7 @@ class LinRegSigmaStrategy(BaseStrategy):
                     self.trades.append(open_trade)
 
                 # Sell if price > (med_lr + 2σ) AND price > (long_lr + 2σ)
-                elif (price > (med_lr + 2*med_sigma)) and (price > (long_lr + 2*long_sigma)):
+                elif (price > (med_lr + 2* med_sigma)) and (price > (long_lr + 2*long_sigma)):
                     position = Position(contract=ticker, price=price, volume=100, side="S", timestamp=date_str)
                     open_trade = Trade(contract=ticker, price=price, volume=100, side="S", timestamp=date_str, comment="Open short LR strategy intraday")
                     self.trades.append(open_trade)
