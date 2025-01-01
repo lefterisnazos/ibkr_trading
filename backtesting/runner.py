@@ -2,6 +2,7 @@
 
 from backtester_app import BacktesterApp
 from backtesting.strategies.OpenRangeBreakout import OpenRangeBreakout
+from backtesting.strategies.LinearRegSigmaStrategy import LinRegSigmaStrategy
 from backtester import Backtester
 import datetime as dt
 
@@ -17,7 +18,7 @@ if __name__ == "__main__":
     end_date = dt.datetime(2023, 6, 1)
 
     # 4) Instantiate the strategy
-    strategy = OpenRangeBreakout(start_date, end_date)
+    strategy = LinRegSigmaStrategy(start_date, end_date, tickers)
 
     # 5) Instantiate the backtester with date range
     backtester = Backtester(

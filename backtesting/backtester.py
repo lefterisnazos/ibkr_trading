@@ -38,7 +38,7 @@ class Backtester:
         self.final_results = self.strategy.run_strategy(self.app, self.daily_data)
 
         # 3) Convert trades to a DataFrame for further analysis
-        self.trades_df = self._convert_trades_to_df(self.strategy.trades_log)
+        self.trades_df = self._convert_trades_to_df(self.strategy.trades)
 
     def _convert_trades_to_df(self, trades_list):
         """

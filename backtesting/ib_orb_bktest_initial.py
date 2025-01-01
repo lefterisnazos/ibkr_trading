@@ -43,20 +43,28 @@ class TradeApp(EWrapper, EClient):
 
         df = self.data.get(reqId, None)
         if df is not None and not df.empty:
-            # Check the first row's date format
-            date_str = df.iloc[0]["Date"]
-            if " " in date_str:
-                # likely intraday => parse with %Y%m%d  %H:%M:%S
-                df["Date"] = pd.to_datetime(df["Date"], format="%Y%m%d  %H:%M:%S")
-            else:
-                # daily => parse with %Y%m%d
-                df["Date"] = pd.to_datetime(df["Date"], format="%Y%m%d")
+            sample = df.iloc[0]["Date"]  # Just check the first row to guess format
 
+            if isinstance(sample, (int, float)):
+                # Likely older intraday => parse as Unix epoch (seconds)
+                df["Date"] = pd.to_datetime(df["Date"], unit="s", origin="unix")
+
+            elif isinstance(sample, str):
+                if " " in sample:
+                    # Format is yyyymmdd HH:MM:SS
+                    df["Date"] = pd.to_datetime(df["Date"], format="%Y%m%d  %H:%M:%S", errors="coerce")
+                else:
+                    # Format is yyyymmdd (daily bars)
+                    df["Date"] = pd.to_datetime(df["Date"], format="%Y%m%d", errors="coerce")
+
+            # Now set as index & sort
             df.set_index("Date", inplace=True)
             df.sort_index(inplace=True)
+
             self.data[reqId] = df
 
         print("HistoricalDataEnd. ReqId:", reqId, "from", start, "to", end)
+        time.sleep(0.2)
 
         self.skip = False
         ticker_event.set()
@@ -69,7 +77,7 @@ def usTechStk(symbol,sec_type="STK",currency="USD",exchange="ISLAND"):
     contract.exchange = exchange
     return contract 
 
-def histData(req_num,contract,endDate,duration,candle_size):
+def histData(req_num,contract,endDate,duration,candle_size, format_date=1):
     """extracts historical data"""
     app.reqHistoricalData(reqId=req_num, 
                           contract=contract,
@@ -78,7 +86,7 @@ def histData(req_num,contract,endDate,duration,candle_size):
                           barSizeSetting=candle_size,
                           whatToShow='TRADES',
                           useRTH=1,
-                          formatDate=1,
+                          formatDate=format_date,
                           keepUpToDate=0,
                           chartOptions=[])	 # EClient function to request contract details
 
@@ -105,9 +113,15 @@ for ticker in tickers:
         print(e)
         print("unable to extract data for {}".format(ticker))
 
+def id_to_tickers(data):
+    ticker_based_data = {}
+    for i, ticker in enumerate(tickers):
+        ticker_based_data[ticker] = data[i]
+    return ticker_based_data
+
 #extract and store historical data in dataframe
 #historicalData = dataDataframe(tickers,app)
-#time.sleep(1)
+time.sleep(2)
 data = deepcopy(app.data)
 
 for hd in data:
@@ -135,16 +149,10 @@ def topGap(data, tickers):
                 # If date is missing in this DF, store NaN
                 gap_map[ticker] = float('nan')
 
-        # Convert to a Series for easy sorting
         gap_series = pd.Series(gap_map)
-
-        # Drop the NaNs so they don't appear as "top"
         gap_series.dropna(inplace=True)
-
-        # Sort descending by gap value and pick top 2
         top_2 = gap_series.sort_values(ascending=False).head(2)
 
-        # Store the tickers (and optionally the gap values) in your output
         top_gap_by_date[date] = top_2.index.tolist()
 
     return top_gap_by_date
@@ -160,7 +168,9 @@ def backtest(top_gap_by_date, data, app):
     """
     date_stats = {}
     reqID = 1000
+    ticker_mapping = {ticker:id for id, ticker in enumerate(tickers)}
 
+    time.sleep(1)
     for daily_date in top_gap_by_date:
         date_stats[daily_date] = {}
 
@@ -172,7 +182,7 @@ def backtest(top_gap_by_date, data, app):
             ticker_event.clear()
 
             # Request intraday data for this ticker on that day
-            histData(reqID, usTechStk(ticker), end_datetime, '1 D', '5 mins')
+            histData(reqID, usTechStk(ticker), end_datetime, '1 D', '5 mins', format_date=2)
             ticker_event.wait()
 
             # If IB returned an error, skip
@@ -181,7 +191,7 @@ def backtest(top_gap_by_date, data, app):
                 reqID += 1
 
             # Give IB a small pause to avoid race conditions
-            time.sleep(3.5)
+            time.sleep(0.5)
 
             # Make sure we actually have data
             intraday_df = app.data.get(reqID, pd.DataFrame())
@@ -213,7 +223,7 @@ def backtest(top_gap_by_date, data, app):
                 next_bar = intraday_df.iloc[i + 1]
 
                 # Check for volume spike condition, etc.
-                if prev_bar["Volume"] > 2 * (data[ticker].loc[daily_date, "AvVol"] / 78) and open_price == '':
+                if prev_bar["Volume"] > 2 * (data[ticker_mapping[ticker]].loc[daily_date, "AvVol"] / 78) and open_price == '':
                     # Long breakout:
                     if current_bar["High"] > hi_price:
                         open_price = 0.8 * next_bar["Open"] + 0.2 * next_bar["High"]

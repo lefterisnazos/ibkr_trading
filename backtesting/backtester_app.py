@@ -49,7 +49,7 @@ class BacktesterApp(EWrapper, EClient):
         self.thread.start()
 
         # Give it a moment to establish connection
-        time.sleep(4)
+        time.sleep(3)
 
     def error(self, reqId, errorCode, errorString, advancedOrderRejectJson=''):
         """
@@ -64,70 +64,38 @@ class BacktesterApp(EWrapper, EClient):
             self.ticker_event.set()
         self.currentReqId +=1
 
-
-    def historicalData(self, reqId, bar):
-        """
-        Callback for each bar of historical data.
-        We'll store it in a pandas DataFrame in self.data[reqId].
-        """
-        self.currentReqId += 1
-        if reqId not in self.data:
-            # Create initial DataFrame
-            self.data[reqId] = pd.DataFrame([{
-                "Date":   bar.date,
-                "Open":   bar.open,
-                "High":   bar.high,
-                "Low":    bar.low,
-                "Close":  bar.close,
-                "Volume": bar.volume
-            }])
-
-        else:
-            # Append to existing DataFrame
-            self.data[reqId] = pd.concat([
-                self.data[reqId],
-                pd.DataFrame([{
-                    "Date":   bar.date,
-                    "Open":   bar.open,
-                    "High":   bar.high,
-                    "Low":    bar.low,
-                    "Close":  bar.close,
-                    "Volume": bar.volume
-                }])
-            ])
-
     def historicalDataEnd(self, reqId, start, end):
-        """
-        Callback fired once all bars for a request have been received.
-        We'll reset 'skip' to False and set the event to notify waiting threads.
-        """
         super().historicalDataEnd(reqId, start, end)
-        print(f"HistoricalDataEnd. ReqId: {reqId}, from {start}, to {end}")
 
         df = self.data.get(reqId, None)
         if df is not None and not df.empty:
-            # Check the first row's date format
-            date_str = df.iloc[0]["Date"]
-            if " " in date_str:
-                # likely intraday => parse with %Y%m%d  %H:%M:%S
-                df["Date"] = pd.to_datetime(df["Date"], format="%Y%m%d  %H:%M:%S")
-            else:
-                # daily => parse with %Y%m%d
-                df["Date"] = pd.to_datetime(df["Date"], format="%Y%m%d")
+            sample = df.iloc[0]["Date"]  # Just check the first row to guess format
 
+            if isinstance(sample, (int, float)):
+                # Likely older intraday => parse as Unix epoch (seconds)
+                df["Date"] = pd.to_datetime(df["Date"], unit="s", origin="unix")
+
+            elif isinstance(sample, str):
+                if " " in sample:
+                    # Format is yyyymmdd HH:MM:SS
+                    df["Date"] = pd.to_datetime(df["Date"], format="%Y%m%d  %H:%M:%S", errors="coerce")
+                else:
+                    # Format is yyyymmdd (daily bars)
+                    df["Date"] = pd.to_datetime(df["Date"], format="%Y%m%d", errors="coerce")
+
+            # Now set as index & sort
             df.set_index("Date", inplace=True)
             df.sort_index(inplace=True)
+
             self.data[reqId] = df
+
+        print("HistoricalDataEnd. ReqId:", reqId, "from", start, "to", end)
+        time.sleep(0.2)
 
         self.skip = False
         self.ticker_event.set()
 
-
-# function for contract creation appropriate for IBKR client. contract is essentially the product we are trading on.
 def usTechStk(symbol, sec_type="STK", currency="USD", exchange="ISLAND"):
-    """
-    Helper function for creating a US Stock Contract.
-    """
     contract = Contract()
     contract.symbol = symbol
     contract.secType = sec_type
@@ -135,23 +103,18 @@ def usTechStk(symbol, sec_type="STK", currency="USD", exchange="ISLAND"):
     contract.exchange = exchange
     return contract
 
-
-def histData(app: BacktesterApp, req_num, contract, endDate, duration, candle_size):
-    """
-    Request historical data from IB through the Env instance.
-    """
-    app.reqHistoricalData(
-        reqId=req_num,
-        contract=contract,
-        endDateTime=endDate,
-        durationStr=duration,
-        barSizeSetting=candle_size,
-        whatToShow='TRADES',
-        useRTH=1,
-        formatDate=1,
-        keepUpToDate=0,
-        chartOptions=[]
-    )
+def histData(app: BacktesterApp, req_num, contract, endDate, duration, candle_size, format_date=1):
+    """extracts historical data"""
+    app.reqHistoricalData(reqId=req_num,
+                          contract=contract,
+                          endDateTime=endDate,
+                          durationStr=duration,
+                          barSizeSetting=candle_size,
+                          whatToShow='TRADES',
+                          useRTH=1,
+                          formatDate=format_date,
+                          keepUpToDate=0,
+                          chartOptions=[])
 
 
 def dataDataframe(symbols, app: BacktesterApp):
