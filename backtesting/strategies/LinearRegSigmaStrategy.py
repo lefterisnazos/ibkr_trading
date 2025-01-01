@@ -4,25 +4,21 @@ import numpy as np
 import datetime as dt
 from typing import Dict, List
 
+from sklearn.linear_model import LinearRegression
+
 from backtesting.strategies.base import BaseStrategy
 from backtesting.pos_order_trade import Position, Trade
 
 
 class LinRegSigmaStrategy(BaseStrategy):
-    def __init__(
-        self,
-        start_date: dt.datetime,
-        end_date: dt.datetime,
-        medium_lookback=50,
-        long_lookback=100
-    ):
+    def __init__(self, start_date: dt.datetime, end_date: dt.datetime, medium_lookback=50, long_lookback=100):
         """
         :param start_date: earliest date to include
         :param end_date: latest date
         :param medium_lookback: bars for medium LR
         :param long_lookback: bars for long LR
         """
-        super().__init__()
+        super(LinRegSigmaStrategy,self).__init__()
         self.start_date = start_date
         self.end_date = end_date
 
@@ -31,17 +27,28 @@ class LinRegSigmaStrategy(BaseStrategy):
 
         self.daily_data: Dict[str, pd.DataFrame] = {}
 
-        # Final results => {date_str: {ticker: float_pnl}}
+        # final_results => {date_str: {ticker: float_pnl}}
+        self.results: Dict[str, Dict[str, float]] = {}
         self.trades = []
         self.positions = []
-        self.results: Dict[str, Dict[str, float]] = {}
 
+        # For requesting intraday data
+        self.next_reqID = None
+
+        # For storing LR info => {ticker: {...}}
         self.lr_info = {}
+
+    def get_data_from(self):
+        """
+        If you need an earlier start to fetch enough data for the longest lookback,
+        you could do: return self.start_date - dt.timedelta(days=self.long_lookback).
+        """
+        return self.start_date - dt.timedelta(days=self.long_lookback)
 
     def prepare_data(self, app, tickers: List[str]) -> Dict[str, pd.DataFrame]:
         """
         1) Request daily data for each ticker
-        2) Filter by [start_date, end_date]
+        2) Filter by [self.start_date, self.end_date]
         3) Return a dict {ticker: DataFrame}
         """
         for idx, ticker in enumerate(tickers):
@@ -49,8 +56,8 @@ class LinRegSigmaStrategy(BaseStrategy):
             app.reqHistoricalData(
                 reqId=idx,
                 contract=app.usTechStk(ticker),
-                endDateTime='',     # up to "now"
-                durationStr='1 Y',  # or "2 Y" etc.
+                endDateTime='',      # up to "now"
+                durationStr='2 Y',   # or "2 Y", etc.
                 barSizeSetting='1 day',
                 whatToShow='TRADES',
                 useRTH=1,
@@ -88,32 +95,41 @@ class LinRegSigmaStrategy(BaseStrategy):
           3) Call simulate_intraday(...) to compute a daily PnL,
           4) Store in self.results[date_str][ticker].
         """
+        self.next_reqID = 1000
 
-        # Ensure self.results is a nested dict => {date_str: {ticker: float_pnl}}
-        # We'll fill it as we go
         for ticker, df in daily_data.items():
             if df.empty:
                 continue
 
-            # Sort the index just in case
             df = df.sort_index()
             dates = df.index
 
+            # We'll do a day-by-day approach
             for date in dates:
                 date_str = date.strftime("%Y-%m-%d")
-                # Make sure there's a sub-dict for this date
                 if date_str not in self.results:
                     self.results[date_str] = {}
 
-                # Request intraday data for this ticker on `date`
+                # 1) Recompute LR lines for this ticker up to 'date'
+                #    or maybe only do this on Fridays if you prefer:
+                #    if date.weekday() == 4 => do it
+                self._compute_linregs_for_ticker(ticker, date)
+
+                # 2) Request intraday data for that day
                 app.ticker_event.clear()
-
-                # e.g. "2024-12-09 22:05:00 US/Eastern"
                 end_date_time = date_str + " 22:05:00 US/Eastern"
-
-                app.reqHistoricalData(reqId=self.next_reqID,  # self.next_reqID is some integer, increment each time
-                    contract=app.usTechStk(ticker), endDateTime=end_date_time, durationStr='1 D', barSizeSetting='5 mins',  # or 10 mins, etc.
-                    whatToShow='TRADES', useRTH=1, formatDate=1, keepUpToDate=0, chartOptions=[])
+                app.reqHistoricalData(
+                    reqId=self.next_reqID,
+                    contract=app.usTechStk(ticker),
+                    endDateTime=end_date_time,
+                    durationStr='1 D',
+                    barSizeSetting='5 mins',
+                    whatToShow='TRADES',
+                    useRTH=1,
+                    formatDate=1,
+                    keepUpToDate=0,
+                    chartOptions=[]
+                )
                 app.ticker_event.wait()
 
                 if app.skip:
@@ -123,8 +139,7 @@ class LinRegSigmaStrategy(BaseStrategy):
                     self.next_reqID += 1
                     continue
 
-                # small delay
-                time.sleep(1.0)
+                time.sleep(0.3)
 
                 intraday_df = app.data.get(self.next_reqID, None)
                 self.next_reqID += 1
@@ -135,10 +150,10 @@ class LinRegSigmaStrategy(BaseStrategy):
 
                 intraday_df = intraday_df.reset_index(drop=True)
 
-                # Retrieve the daily_row for that date
+                # daily_row for that date
                 daily_row = df.loc[date]
 
-                # Simulate intraday logic
+                # 3) Simulate intraday logic
                 final_pnl = self.simulate_intraday(ticker, date_str, intraday_df, daily_row)
                 self.results[date_str][ticker] = final_pnl
 
@@ -146,45 +161,98 @@ class LinRegSigmaStrategy(BaseStrategy):
 
     def _compute_linregs_for_ticker(self, ticker: str, current_date: dt.datetime):
         """
-        Recompute medium & long LR lines for ticker up to 'current_date'
-        and store them in self.lr_info[ticker].
+        Recompute medium & long LR lines for `ticker` up to `current_date`
+        using scikit-learn, computing sigma from raw Close values,
+        and optionally generating future predictions.
+        Store them in self.lr_info[ticker].
         """
         df = self.daily_data.get(ticker, pd.DataFrame())
+        if df.empty:
+            return
+
+        # Slice up to current_date
         df_sub = df.loc[:current_date].copy()
         if len(df_sub) < self.long_lookback:
-            return  # not enough data
+            # Not enough data => skip
+            return
 
-        # medium LR
-        med_val, med_sigma = self._fit_linreg(df_sub.tail(self.medium_lookback))
-        # long LR
-        long_val, long_sigma = self._fit_linreg(df_sub.tail(self.long_lookback))
+        # For medium
+        df_med = df_sub.tail(self.medium_lookback)
+        med_dict = self._fit_linreg_scikit(df_med)
 
-        self.lr_info[ticker] = {"medium_lr": med_val, "medium_sigma": med_sigma, "long_lr": long_val, "long_sigma": long_sigma}
+        # For long
+        df_long = df_sub.tail(self.long_lookback)
+        long_dict = self._fit_linreg_scikit(df_long)
 
-    def _fit_linreg(self, sub_df: pd.DataFrame) -> (float, float):
+        # We'll store them in self.lr_info[ticker]
+        self.lr_info[ticker] = {
+            "medium_lr": med_dict["last_pred"],   # predicted value on last bar
+            "medium_sigma": med_dict["sigma"],    # stdev of y
+            "medium_future_preds": med_dict["future_preds"],
+
+            "long_lr": long_dict["last_pred"],
+            "long_sigma": long_dict["sigma"],
+            "long_future_preds": long_dict["future_preds"]
+        }
+
+    def _fit_linreg_scikit(self, df_in: pd.DataFrame, days_ahead_to_predict=3) -> dict:
         """
-        Fit a line to 'Close' in sub_df, return (lr_value on last bar, sigma).
+        Fit a scikit-learn LinearRegression on df_in['Close'].
+        x = 0..len-1
+        Returns a dict:
+          {
+            "slope": ...,
+            "intercept": ...,
+            "sigma": stdev_of_raw_close_values,
+            "last_pred": predicted_value_on_last_bar,
+            "future_preds": array of predictions for the next `future_days`
+          }
         """
-        if len(sub_df) < 2:
-            return (None, None)
-        y = sub_df["Close"].values
-        x = np.arange(len(y))
+        if len(df_in) < 2:
+            return {
+                "slope": None,
+                "intercept": None,
+                "sigma": None,
+                "last_pred": None,
+                "future_preds": []
+            }
 
-        slope, intercept = np.polyfit(x, y, 1)
-        fitted = intercept + slope * x
-        residuals = y - fitted
+        # x is 0..N-1
+        N = len(df_in)
+        x = np.arange(N).reshape(-1, 1)
+        y = df_in["Close"].values
 
-        sigma = residuals.std(ddof=1)
-        # line value on the last bar
-        lr_value = intercept + slope * (len(y) - 1)
-        return (lr_value, sigma)
+        # Fit scikit-learn
+        reg = LinearRegression()
+        reg.fit(x, y)
 
-    def simulate_intraday(self, ticker: str, date_str: str, intraday_df: pd.DataFrame, daily_row: pd.Series) -> float:
+        slope = reg.coef_[0]
+        intercept = reg.intercept_
+
+        # Sigma = stdev of the raw close values, not the residuals
+        sigma = np.std(y, ddof=1)
+
+        # predicted value for last bar
+        last_pred = reg.predict([[N - 1]])[0]
+
+        # optional future forecasts => next `future_days` bars
+        x_future = np.arange(N, N + days_ahead_to_predict).reshape(-1, 1)
+        future_preds = reg.predict(x_future)
+
+        return {
+            "slope": slope,
+            "intercept": intercept,
+            "sigma": sigma,
+            "last_pred": last_pred,
+            "future_preds": future_preds
+        }
+
+    def simulate_intraday(self, ticker: str, date_str: str,
+                          intraday_df: pd.DataFrame, daily_row: pd.Series, volume=100) -> float:
         """
         Bar-by-bar intraday logic:
-         - We have medium_lr, long_lr, etc. from self.lr_info[ticker].
-         - For each 10-min bar, see if we open/close positions
-           based on LR ± 2sigma / ±3.5sigma rules.
+         - We have medium_lr, long_lr from self.lr_info[ticker].
+         - We'll do ±2σ or ±3.5σ rules for open/close signals.
          - Return final PnL from the last bar.
         """
         lr_data = self.lr_info.get(ticker, {})
@@ -194,41 +262,37 @@ class LinRegSigmaStrategy(BaseStrategy):
         long_sigma = lr_data.get("long_sigma", None)
 
         if any(x is None for x in [med_lr, med_sigma, long_lr, long_sigma]):
-            # no LR data => no trades
+            # No LR data => skip trades
             return 0.0
 
-        # We'll track a single intraday position
         position = None
         final_return = 0.0
+        volume = 2
 
-        # Bar-by-bar
         for i in range(len(intraday_df)):
             bar = intraday_df.iloc[i]
-            price = bar["Close"]  # or you can use the mid or something
+            price = bar["Close"]
 
             # If no position => check open signals
             if position is None:
                 # Buy if price < (med_lr - 2σ) AND price < (long_lr - 2σ)
-                if (price < (med_lr - 2*med_sigma)) and (price < (long_lr - 2*long_sigma)):
-
-                    position = Position(contract=ticker, price=price, volume=100, side="B", timestamp=date_str)
-                    open_trade = Trade(contract=ticker, price=price, volume=100, side="B", timestamp=date_str, comment="Open long LR strategy intraday")
+                if (price < (med_lr - 2 * med_sigma)) and (price < (long_lr - 2 * long_sigma)):
+                    position = Position(contract=ticker, price=price, volume=volume, side="B", timestamp=date_str)
+                    open_trade = Trade(contract=ticker, price=price, volume=volume, side="B", timestamp=date_str, comment="Open long LR strategy intraday")
                     self.trades.append(open_trade)
 
                 # Sell if price > (med_lr + 2σ) AND price > (long_lr + 2σ)
-                elif (price > (med_lr + 2* med_sigma)) and (price > (long_lr + 2*long_sigma)):
-                    position = Position(contract=ticker, price=price, volume=100, side="S", timestamp=date_str)
-                    open_trade = Trade(contract=ticker, price=price, volume=100, side="S", timestamp=date_str, comment="Open short LR strategy intraday")
+                elif (price > (med_lr + 2 * med_sigma)) and (price > (long_lr + 2 * long_sigma)):
+                    position = Position(contract=ticker, price=price, volume=volume, side="S", timestamp=date_str)
+                    open_trade = Trade(contract=ticker, price=price, volume=volume, side="S", timestamp=date_str, comment="Open short LR strategy intraday")
                     self.trades.append(open_trade)
-                # if no open => final_return=0 up to now
 
             # If we have a position => check TP/SL
             if position is not None:
-                if position.side == "B":  # long
+                if position.side == "B":
                     # Take-profit if price >= med_lr
                     if price >= med_lr:
                         close_price = med_lr
-
                         trade = Trade(contract=ticker, price=close_price, volume=position.volume, side="S", timestamp=date_str, comment="Close long: TP")
                         position.reduce(trade)
                         self.trades.append(trade)
@@ -237,8 +301,8 @@ class LinRegSigmaStrategy(BaseStrategy):
                         position = None
                         break
                     # Stop-loss if price <= med_lr - 3.5σ
-                    elif price <= (med_lr - 3.5*med_sigma):
-                        close_price = med_lr - 3.5*med_sigma
+                    elif price <= (med_lr - 3.5 * med_sigma):
+                        close_price = med_lr - 3.5 * med_sigma
                         trade = Trade(contract=ticker, price=close_price, volume=position.volume, side="S", timestamp=date_str, comment="Close long: SL")
                         position.reduce(trade)
                         self.trades.append(trade)
@@ -247,7 +311,7 @@ class LinRegSigmaStrategy(BaseStrategy):
                         position = None
                         break
                     else:
-                        # floating
+                        # floating PnL
                         final_return = (price / position.avg_price) - 1
 
                 else:  # short
@@ -261,14 +325,13 @@ class LinRegSigmaStrategy(BaseStrategy):
                         position = None
                         break
                     # SL => price >= med_lr + 3.5σ
-                    elif price >= (med_lr + 3.5 *med_sigma):
-                        close_price = med_lr + 3.5*med_sigma
+                    elif price >= (med_lr + 3.5 * med_sigma):
+                        close_price = med_lr + 3.5 * med_sigma
                         trade = Trade(contract=ticker, price=close_price, volume=position.volume, side="B", timestamp=date_str, comment="Close short: SL")
                         position.reduce(trade)
-
                         self.trades.append(trade)
-                        final_return = 1 - (close_price / position.avg_price)
 
+                        final_return = 1 - (close_price / position.avg_price)
                         position = None
                         break
                     else:

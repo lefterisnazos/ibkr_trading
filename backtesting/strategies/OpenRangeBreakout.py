@@ -13,7 +13,7 @@ import datetime as dt
 
 class OpenRangeBreakout(BaseStrategy):
     def __init__(self, start_date, end_date):
-        super().__init__()
+        super(OpenRangeBreakout,self).__init__()
         self.daily_data: Dict[str, pd.DataFrame] = {}
         self.results: Dict[str, Dict[str, float]] = {}
         self.trades_log = []
