@@ -5,13 +5,14 @@ import datetime as dt
 from typing import Dict, List
 
 from sklearn.linear_model import LinearRegression
+from backtesting.backtester_app import *
 
 from backtesting.strategies.base import BaseStrategy
 from backtesting.pos_order_trade import Position, Trade
 
 
 class LinRegSigmaStrategy(BaseStrategy):
-    def __init__(self, start_date: dt.datetime, end_date: dt.datetime, medium_lookback=50, long_lookback=100):
+    def __init__(self, start_date: dt.datetime, end_date: dt.datetime, medium_lookback=20, long_lookback=40):
         """
         :param start_date: earliest date to include
         :param end_date: latest date
@@ -29,8 +30,8 @@ class LinRegSigmaStrategy(BaseStrategy):
 
         # final_results => {date_str: {ticker: float_pnl}}
         self.results: Dict[str, Dict[str, float]] = {}
-        self.trades = []
-        self.positions = []
+        self.trades = {}
+        self.positions = {}
 
         # For requesting intraday data
         self.next_reqID = None
@@ -51,11 +52,15 @@ class LinRegSigmaStrategy(BaseStrategy):
         2) Filter by [self.start_date, self.end_date]
         3) Return a dict {ticker: DataFrame}
         """
+        for ticker in tickers:
+            self.positions[ticker] = []
+            self.trades[ticker] = []
+
         for idx, ticker in enumerate(tickers):
             app.ticker_event.clear()
             app.reqHistoricalData(
                 reqId=idx,
-                contract=app.usTechStk(ticker),
+                contract=usTechStk(ticker),
                 endDateTime='',      # up to "now"
                 durationStr='2 Y',   # or "2 Y", etc.
                 barSizeSetting='1 day',
@@ -73,14 +78,9 @@ class LinRegSigmaStrategy(BaseStrategy):
         for idx, ticker in enumerate(tickers):
             df = app.data.get(idx, None)
             if df is not None and not df.empty:
-                df = df.copy().reset_index(drop=True)
-                df.set_index("Date", inplace=True)
-                df.index = pd.to_datetime(df.index)
-
                 # Filter by start/end
-                df = df.loc[(df.index >= self.start_date) & (df.index <= self.end_date)]
-                df.dropna(subset=["Open", "High", "Low", "Close"], inplace=True)
-                df.sort_index(inplace=True)
+                data_from = self.get_data_from()
+                df = df.loc[(df.index >= data_from) & (df.index <= self.end_date)]
                 self.daily_data[ticker] = df
             else:
                 self.daily_data[ticker] = pd.DataFrame()
@@ -120,13 +120,13 @@ class LinRegSigmaStrategy(BaseStrategy):
                 end_date_time = date_str + " 22:05:00 US/Eastern"
                 app.reqHistoricalData(
                     reqId=self.next_reqID,
-                    contract=app.usTechStk(ticker),
+                    contract=usTechStk(ticker),
                     endDateTime=end_date_time,
                     durationStr='1 D',
-                    barSizeSetting='5 mins',
+                    barSizeSetting='10 mins',
                     whatToShow='TRADES',
                     useRTH=1,
-                    formatDate=1,
+                    formatDate=2,
                     keepUpToDate=0,
                     chartOptions=[]
                 )
@@ -265,7 +265,6 @@ class LinRegSigmaStrategy(BaseStrategy):
             # No LR data => skip trades
             return 0.0
 
-        position = None
         final_return = 0.0
         volume = 2
 
@@ -274,7 +273,7 @@ class LinRegSigmaStrategy(BaseStrategy):
             price = bar["Close"]
 
             # If no position => check open signals
-            if position is None:
+            if position[ticker] is None:
                 # Buy if price < (med_lr - 2σ) AND price < (long_lr - 2σ)
                 if (price < (med_lr - 2 * med_sigma)) and (price < (long_lr - 2 * long_sigma)):
                     position = Position(contract=ticker, price=price, volume=volume, side="B", timestamp=date_str)

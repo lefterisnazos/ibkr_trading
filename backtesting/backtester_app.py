@@ -15,7 +15,7 @@ class BacktesterApp(EWrapper, EClient):
       - Internal data structures for storing data returned from IB
       - Error handling to skip further requests if needed
     """
-    def __init__(self, host='127.0.0.1', port=7497, clientId=24):
+    def __init__(self, host='127.0.0.1', port=7497, clientId=25):
         EClient.__init__(self, self)
 
         self.host = host
@@ -63,6 +63,12 @@ class BacktesterApp(EWrapper, EClient):
             print(f"Skipping calculations for reqId: {reqId}")
             self.ticker_event.set()
         self.currentReqId +=1
+
+    def historicalData(self, reqId, bar):
+        if reqId not in self.data:
+            self.data[reqId] = pd.DataFrame([{"Date":bar.date,"Open":bar.open,"High":bar.high,"Low":bar.low,"Close":bar.close,"Volume":bar.volume}])
+        else:
+            self.data[reqId] = pd.concat((self.data[reqId],pd.DataFrame([{"Date":bar.date,"Open":bar.open,"High":bar.high,"Low":bar.low,"Close":bar.close,"Volume":bar.volume}])))
 
     def historicalDataEnd(self, reqId, start, end):
         super().historicalDataEnd(reqId, start, end)
