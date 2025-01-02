@@ -40,13 +40,6 @@ class LinRegSigmaStrategy(BaseStrategy):
         self.last_train_date = None
         self.lr_info = {}
 
-    def get_data_from(self):
-        """
-        If you need an earlier start to fetch enough data for the longest lookback,
-        you could do: return self.start_date - dt.timedelta(days=self.long_lookback).
-        """
-        return self.start_date - dt.timedelta(days=self.long_lookback)
-
     def prepare_data(self, app, tickers: List[str]) -> Dict[str, pd.DataFrame]:
         """
         1) Request daily data for each ticker
@@ -91,6 +84,14 @@ class LinRegSigmaStrategy(BaseStrategy):
 
         return self.daily_data
 
+    def get_data_from(self):
+        """
+        If you need an earlier start to fetch enough data for the longest lookback,
+        you could do: return self.start_date - dt.timedelta(days=self.long_lookback).
+        """
+        return self.start_date - dt.timedelta(days=self.long_lookback)
+
+
     def run_strategy(self, app, daily_data: Dict[str, pd.DataFrame]) -> Dict[str, Dict[str, float]]:
         """
         For each ticker in daily_data:
@@ -103,12 +104,11 @@ class LinRegSigmaStrategy(BaseStrategy):
         trading_days_from_train = 0
         medium_term_results, long_term_results = {}, {}
 
-
         for ticker, df in daily_data.items():
             if df.empty:
                 continue
 
-            simulation_index = df[df.index>=self.start_date].index
+            simulation_index = df[df.index >= self.start_date].index
             for simulation_date in simulation_index:
 
                 if simulation_date not in self.results:
@@ -116,7 +116,7 @@ class LinRegSigmaStrategy(BaseStrategy):
 
                 if simulation_date.weekday() == 4 or self.next_reqID == 1000:
                     period_df = df.loc[df.index < simulation_date]
-                    medium_term_results, long_term_results  = self._compute_linregs_for_ticker(ticker, period_df, simulation_date)
+                    medium_term_results, long_term_results = self._compute_linregs_for_ticker(ticker, period_df, simulation_date)
                     self.last_train_date = simulation_date
                     trading_days_from_train = 0
 
@@ -133,18 +133,8 @@ class LinRegSigmaStrategy(BaseStrategy):
                 app.ticker_event.clear()
                 date_str = simulation_date.strftime("%Y%m%d")
                 end_date_time = date_str + " 22:05:00 US/Eastern"
-                app.reqHistoricalData(
-                    reqId=self.next_reqID,
-                    contract=usTechStk(ticker),
-                    endDateTime=end_date_time,
-                    durationStr='1 D',
-                    barSizeSetting='5 mins',
-                    whatToShow='TRADES',
-                    useRTH=1,
-                    formatDate=1,
-                    keepUpToDate=0,
-                    chartOptions=[]
-                )
+                app.reqHistoricalData(reqId=self.next_reqID, contract=usTechStk(ticker), endDateTime=end_date_time, durationStr='1 D', barSizeSetting='5 mins',
+                    whatToShow='TRADES', useRTH=1, formatDate=1, keepUpToDate=0, chartOptions=[])
                 app.ticker_event.wait()
 
                 if app.skip:
@@ -166,7 +156,7 @@ class LinRegSigmaStrategy(BaseStrategy):
                 daily_row = df.loc[simulation_date]
 
                 # 2) Simulate intraday logic
-                final_pnl = self.simulate_intraday(ticker, simulation_date.date(), intraday_df, daily_row, regressions_results = regressions_results)
+                final_pnl = self.simulate_intraday(ticker, simulation_date.date(), intraday_df, daily_row, regressions_results=regressions_results)
                 self.results[simulation_date][ticker] = final_pnl
 
         return self.results
