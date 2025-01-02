@@ -58,10 +58,10 @@ class BacktesterApp(EWrapper, EClient):
         and notify the thread waiting on ticker_event.
         """
         print(f"Error. ReqId: {reqId}, Code: {errorCode}, Msg: {errorString}")
-        if reqId != -1:
+        if errorCode!= 2176:
             self.skip = True
-            print(f"Skipping calculations for reqId: {reqId}")
-            self.ticker_event.set()
+            print("skipping calculations")
+        self.ticker_event.set()
         self.currentReqId +=1
 
     def historicalData(self, reqId, bar):
@@ -96,7 +96,6 @@ class BacktesterApp(EWrapper, EClient):
             self.data[reqId] = df
 
         print("HistoricalDataEnd. ReqId:", reqId, "from", start, "to", end)
-        time.sleep(0.3)
 
         self.skip = False
         self.ticker_event.set()

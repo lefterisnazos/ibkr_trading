@@ -53,11 +53,11 @@ class LinRegSigmaStrategy(BaseStrategy):
         2) Filter by [self.start_date, self.end_date]
         3) Return a dict {ticker: DataFrame}
         """
-        for ticker in tickers:
-            self.positions[ticker] = []
+        for idx, ticker in enumerate(tickers):
+
+            self.position[ticker] = None
             self.trades[ticker] = []
 
-        for idx, ticker in enumerate(tickers):
             app.ticker_event.clear()
             end_date_str = self.end_date.strftime("%Y%m%d") + " 22:05:00 US/Eastern"
             app.reqHistoricalData(
@@ -85,6 +85,7 @@ class LinRegSigmaStrategy(BaseStrategy):
                 data_from = self.get_data_from()
                 df = df.loc[(df.index >= data_from) & (df.index <= self.end_date)]
                 self.daily_data[ticker] = df
+
             else:
                 self.daily_data[ticker] = pd.DataFrame()
 
@@ -140,7 +141,7 @@ class LinRegSigmaStrategy(BaseStrategy):
                     barSizeSetting='5 mins',
                     whatToShow='TRADES',
                     useRTH=1,
-                    formatDate=2,
+                    formatDate=1,
                     keepUpToDate=0,
                     chartOptions=[]
                 )
@@ -244,33 +245,38 @@ class LinRegSigmaStrategy(BaseStrategy):
          - We'll do ±2σ or ±3.5σ rules for open/close signals.
          - Return final PnL from the last bar.
         """
-
-        lr_long = kwargs.get('lr_long', None)
-        lr_med = kwargs.get('lr_med', None)
-        sigma_long = kwargs.get('sigma_long', None)
-        sigma_med = kwargs.get('sigma_med', None)
+        regressions_results = kwargs.get("regressions_results", None)
+        lr_long = regressions_results.get("lr_long")
+        lr_med = regressions_results.get("lr_med")
+        sigma_long = regressions_results.get("sigma_long")
+        sigma_med = regressions_results.get("sigma_med")
 
         final_return = 0.0
 
         for i in range(len(intraday_df)):
             bar = intraday_df.iloc[i]
-            price = bar["Close"]
+            price = bar["Open"]
+
+            # current slippage logic : fixed cost of 0.2% of price.
+            virtual_buy_price = price * 1.002
+            virtual_sell_price = price* 0.998
 
             # 1) If we have NO position for this ticker => check open signals
             if self.position[ticker] is None:
-                # Buy if price < (lr_med - 2*sigma_med) AND price < (lr_long - 2*sigma_long)
-                if ((lr_med is not None and sigma_med is not None) and (lr_long is not None and sigma_long is not None) and (price < lr_med - 2 * sigma_med) and (
-                        price < lr_long - 2 * sigma_long)):
+                # go Long if price < (lr_med - 2*sigma_med) AND price < (lr_long - 2*sigma_long)
+                if (price < lr_med - 2 * sigma_med) and (price < lr_long - 2 * sigma_long):
                     self.position[ticker] = Position(contract=ticker, price=price, volume=volume, side="B", timestamp=date)
-                    open_trade = Trade(contract=ticker, price=price, volume=volume, side="B", timestamp=date, comment="Open long LR strategy intraday")
+                    open_trade = Trade(contract=ticker, price=virtual_buy_price, volume=volume, side="B", timestamp=date, comment="Open long LR strategy intraday")
                     self.trades[ticker].append(open_trade)
+                    print(open_trade)
 
-                # Sell if price > (lr_med + 2*sigma_med) AND price > (lr_long + 2*sigma_long)
-                elif ((lr_med is not None and sigma_med is not None) and (lr_long is not None and sigma_long is not None) and (price > lr_med + 2 * sigma_med) and (
-                        price > lr_long + 2 * sigma_long)):
-                    self.position[ticker] = Position(contract=ticker, price=price, volume=volume, side="S", timestamp=date)
+                # go Short if price > (lr_med + 2*sigma_med) AND price > (lr_long + 2*sigma_long)
+                elif (price > lr_med + 2 * sigma_med) and (price > lr_long + 2 * sigma_long):
+                    self.position[ticker] = Position(contract=virtual_sell_price, price=price, volume=volume, side="S", timestamp=date)
                     open_trade = Trade(contract=ticker, price=price, volume=volume, side="S", timestamp=date, comment="Open short LR strategy intraday")
                     self.trades[ticker].append(open_trade)
+                    print(open_trade)
+
 
             # 2) If we DO have a position => check TP/SL
             if self.position[ticker] is not None:
@@ -278,23 +284,23 @@ class LinRegSigmaStrategy(BaseStrategy):
 
                     # Take-profit if price >= lr_med
                     if lr_med is not None and price >= lr_med:
-                        close_price = lr_med
-                        trade = Trade(contract=ticker, price=close_price, volume=self.position[ticker].volume, side="S", timestamp=date, comment="Close long: TP")
+                        trade = Trade(contract=ticker, price=virtual_sell_price, volume=self.position[ticker].volume, side="S", timestamp=date, comment="Close long: TP")
                         self.position[ticker].reduce(trade)
                         self.trades[ticker].append(trade)
+                        print(trade)
 
-                        final_return = (close_price / self.position[ticker].avg_price) - 1
+                        final_return = (virtual_sell_price / self.position[ticker].avg_price) - 1
                         self.position[ticker] = None
                         break
 
                     # Stop-loss if price <= lr_med - 3.5*sigma_med
-                    elif lr_med is not None and sigma_med is not None and price <= (lr_med - 3.5 * sigma_med):
-                        close_price = lr_med - 3.5 * sigma_med
-                        trade = Trade(contract=ticker, price=close_price, volume=self.position[ticker].volume, side="S", timestamp=date, comment="Close long: SL")
+                    elif price <= (lr_med - 3.5 * sigma_med):
+                        trade = Trade(contract=ticker, price=virtual_sell_price, volume=self.position[ticker].volume, side="S", timestamp=date, comment="Close long: SL")
                         self.position[ticker].reduce(trade)
                         self.trades[ticker].append(trade)
+                        print(trade)
 
-                        final_return = (close_price / self.position[ticker].avg_price) - 1
+                        final_return = (virtual_sell_price / self.position[ticker].avg_price) - 1
                         self.position[ticker] = None
                         break
                     else:
@@ -303,24 +309,24 @@ class LinRegSigmaStrategy(BaseStrategy):
 
                 else:  # side == "S" (short)
                     # Take-profit => price <= lr_med
-                    if lr_med is not None and price <= lr_med:
-                        close_price = lr_med
-                        trade = Trade(contract=ticker, price=close_price, volume=self.position[ticker].volume, side="B", timestamp=date, comment="Close short: TP")
+                    if  price <= lr_med:
+                        trade = Trade(contract=ticker, price=virtual_buy_price, volume=self.position[ticker].volume, side="B", timestamp=date, comment="Close short: TP")
                         self.position[ticker].reduce(trade)
                         self.trades[ticker].append(trade)
+                        print(trade)
 
-                        final_return = 1 - (close_price / self.position[ticker].avg_price)
+                        final_return = 1 - (virtual_buy_price / self.position[ticker].avg_price)
                         self.position[ticker] = None
                         break
 
                     # Stop-loss => price >= lr_med + 3.5*sigma_med
-                    elif lr_med is not None and sigma_med is not None and price >= (lr_med + 3.5 * sigma_med):
-                        close_price = lr_med + 3.5 * sigma_med
-                        trade = Trade(contract=ticker, price=close_price, volume=self.position[ticker].volume, side="B", timestamp=date, comment="Close short: SL")
+                    elif price >= (lr_med + 3.5 * sigma_med):
+                        trade = Trade(contract=ticker, price=virtual_buy_price, volume=self.position[ticker].volume, side="B", timestamp=date, comment="Close short: SL")
                         self.position[ticker].reduce(trade)
                         self.trades[ticker].append(trade)
+                        print(trade)
 
-                        final_return = 1 - (close_price / self.position[ticker].avg_price)
+                        final_return = 1 - (virtual_buy_price / self.position[ticker].avg_price)
                         self.position[ticker] = None
                         break
                     else:
