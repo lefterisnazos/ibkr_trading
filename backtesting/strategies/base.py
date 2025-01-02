@@ -1,6 +1,5 @@
 import pandas as pd
 from typing import Dict, Optional
-from backtesting.ib_client import *
 
 
 class BaseStrategy:
@@ -10,17 +9,13 @@ class BaseStrategy:
         self.start_date = None
         self.end_date = None
 
-
-        self.ib_client = IBClient(port=7497, client_id=25)
-
-
-    def prepare_data(self, app, tickers) -> Dict[str, pd.DataFrame]:
+    def prepare_data(self) -> Dict[str, pd.DataFrame]:
         """
         Fetch and prepare daily data. Return a dict {ticker: DataFrame}.
         """
         raise NotImplementedError("Please implement prepare_data() in your derived strategy.")
 
-    def run_strategy(self, app, daily_data: Dict[str, pd.DataFrame]) -> Dict[str, Dict[str, float]]:
+    def run_strategy(self) -> Dict[str, Dict[str, float]]:
         """
         Orchestrates the day-by-day, ticker-by-ticker flow:
           1) get_trade_universe_by_date(daily_data)

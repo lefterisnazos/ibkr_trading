@@ -24,6 +24,7 @@ class LinRegSigmaStrategy(BaseStrategy):
         self.start_date = start_date
         self.end_date = end_date
         self.ib = IBClient(port=7497, client_id=25)
+        self.connect_to_ib()
 
         self.medium_lookback = medium_lookback
         self.long_lookback = long_lookback
@@ -45,7 +46,7 @@ class LinRegSigmaStrategy(BaseStrategy):
     def disconnect_from_ib(self):
         self.ib_client.disconnect()
 
-    def prepare_data(self, app, tickers: List[str]) -> Dict[str, pd.DataFrame]:
+    def prepare_data(self,  tickers: List[str]) -> Dict[str, pd.DataFrame]:
         """
         1) Request daily data for each ticker
         2) Filter by [self.start_date, self.end_date]
@@ -77,7 +78,7 @@ class LinRegSigmaStrategy(BaseStrategy):
         return self.start_date - dt.timedelta(days=self.long_lookback)
 
 
-    def run_strategy(self, app, daily_data: Dict[str, pd.DataFrame]) -> Dict[str, Dict[str, float]]:
+    def run_strategy(self) -> Dict[str, Dict[str, float]]:
         """
         For each ticker in daily_data:
           1) For each simulation_date in daily_data[ticker].index (in chronological order),
@@ -130,10 +131,6 @@ class LinRegSigmaStrategy(BaseStrategy):
 
             return self.results
 
-    def _get_linear_reg_values(self, term_results, simulation_date):
-
-
-        lr = term_results['intercept'] + term_results['slope']*len()
 
     def _compute_linregs_for_ticker(self, ticker: str, period_df: pd.DataFrame, simulation_date):
         """
@@ -162,15 +159,9 @@ class LinRegSigmaStrategy(BaseStrategy):
         return med_dict, long_dict
 
     def _fit_linreg_scikit(self, df_in: pd.DataFrame, simulation_date) -> dict:
+
         """
         Fit a scikit-learn LinearRegression on df_in['Close'].
-        x = 0..len-1
-        Returns a dict:
-          {
-            "slope": ...,
-            "intercept": ...,
-            "sigma": stdev_of_raw_close_values,
-            " data_length: len(df_in), so we can correctly get future predictions.
 
         """
 
