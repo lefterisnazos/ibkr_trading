@@ -11,11 +11,11 @@ if __name__ == "__main__":
     app = BacktesterApp(host='127.0.0.1', port=7497, clientId=26)
 
     # 2) Define ticker universe
-    tickers = ["AAPL", "TSLA", "IBKR"]
+    tickers = ["TSLA" ]
 
     # 3) Start & end date for backtest
     start_date = dt.datetime(2024, 1, 1)
-    end_date = dt.datetime(2024, 6, 1)
+    end_date = dt.datetime(2024, 2, 1)
 
     # 4) Instantiate the strategy
     strategy = LinRegSigmaStrategy(start_date, end_date)

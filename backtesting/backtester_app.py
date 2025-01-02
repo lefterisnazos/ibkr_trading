@@ -51,18 +51,18 @@ class BacktesterApp(EWrapper, EClient):
         # Give it a moment to establish connection
         time.sleep(3)
 
-    def error(self, reqId, errorCode, errorString, advancedOrderRejectJson=''):
-        """
-        Overridden error handler from EWrapper.
-        If there's an error for a specific request ID, we set 'skip' to True
-        and notify the thread waiting on ticker_event.
-        """
-        print(f"Error. ReqId: {reqId}, Code: {errorCode}, Msg: {errorString}")
-        if errorCode!= 2176:
-            self.skip = True
-            print("skipping calculations")
-        self.ticker_event.set()
-        self.currentReqId +=1
+    # def error(self, reqId, errorCode, errorString, advancedOrderRejectJson=''):
+    #     """
+    #     Overridden error handler from EWrapper.
+    #     If there's an error for a specific request ID, we set 'skip' to True
+    #     and notify the thread waiting on ticker_event.
+    #     """
+    #     print(f"Error. ReqId: {reqId}, Code: {errorCode}, Msg: {errorString}")
+    #     if errorCode!= 2176:
+    #         self.skip = True
+    #         print("skipping calculations")
+    #     self.ticker_event.set()
+    #     self.currentReqId +=1
 
     def historicalData(self, reqId, bar):
         if reqId not in self.data:
