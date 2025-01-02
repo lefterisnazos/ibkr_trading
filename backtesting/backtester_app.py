@@ -96,7 +96,7 @@ class BacktesterApp(EWrapper, EClient):
             self.data[reqId] = df
 
         print("HistoricalDataEnd. ReqId:", reqId, "from", start, "to", end)
-        time.sleep(0.2)
+        time.sleep(0.3)
 
         self.skip = False
         self.ticker_event.set()

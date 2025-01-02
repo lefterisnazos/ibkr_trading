@@ -31,12 +31,13 @@ class LinRegSigmaStrategy(BaseStrategy):
         # final_results => {date_str: {ticker: float_pnl}}
         self.results: Dict[str, Dict[str, float]] = {}
         self.trades = {}
-        self.positions = {}
+        self.position = {}
 
         # For requesting intraday data
         self.next_reqID = None
 
         # For storing LR info => {ticker: {...}}
+        self.last_train_date = None
         self.lr_info = {}
 
     def get_data_from(self):
@@ -58,11 +59,12 @@ class LinRegSigmaStrategy(BaseStrategy):
 
         for idx, ticker in enumerate(tickers):
             app.ticker_event.clear()
+            end_date_str = self.end_date.strftime("%Y%m%d") + " 22:05:00 US/Eastern"
             app.reqHistoricalData(
                 reqId=idx,
                 contract=usTechStk(ticker),
-                endDateTime='',      # up to "now"
-                durationStr='2 Y',   # or "2 Y", etc.
+                endDateTime=end_date_str,      # up to "now"
+                durationStr='1 Y',   # or "2 Y", etc.
                 barSizeSetting='1 day',
                 whatToShow='TRADES',
                 useRTH=1,
@@ -75,6 +77,7 @@ class LinRegSigmaStrategy(BaseStrategy):
                 print(f"Skipping daily data for {ticker} due to IB error.")
                 app.skip = False
 
+        time.sleep(0.5)
         for idx, ticker in enumerate(tickers):
             df = app.data.get(idx, None)
             if df is not None and not df.empty:
@@ -90,40 +93,51 @@ class LinRegSigmaStrategy(BaseStrategy):
     def run_strategy(self, app, daily_data: Dict[str, pd.DataFrame]) -> Dict[str, Dict[str, float]]:
         """
         For each ticker in daily_data:
-          1) For each date in daily_data[ticker].index (in chronological order),
-          2) Request intraday data for that date,
+          1) For each simulation_date in daily_data[ticker].index (in chronological order),
+          2) Request intraday data for that simulation_date,
           3) Call simulate_intraday(...) to compute a daily PnL,
           4) Store in self.results[date_str][ticker].
         """
         self.next_reqID = 1000
+        trading_days_from_train = 0
+        medium_term_results, long_term_results = {}, {}
+
 
         for ticker, df in daily_data.items():
             if df.empty:
                 continue
 
-            df = df.sort_index()
-            dates = df.index
+            simulation_index = df[df.index>=self.start_date].index
+            for simulation_date in simulation_index:
 
-            # We'll do a day-by-day approach
-            for date in dates:
-                date_str = date.strftime("%Y-%m-%d")
-                if date_str not in self.results:
-                    self.results[date_str] = {}
+                if simulation_date not in self.results:
+                    self.results[simulation_date] = {}
 
-                # 1) Recompute LR lines for this ticker up to 'date'
-                #    or maybe only do this on Fridays if you prefer:
-                #    if date.weekday() == 4 => do it
-                self._compute_linregs_for_ticker(ticker, date)
+                if simulation_date.weekday() == 4 or self.next_reqID == 1000:
+                    period_df = df.loc[df.index < simulation_date]
+                    medium_term_results, long_term_results  = self._compute_linregs_for_ticker(ticker, period_df, simulation_date)
+                    self.last_train_date = simulation_date
+                    trading_days_from_train = 0
 
-                # 2) Request intraday data for that day
+                trading_days_from_train += 1
+                lr_med = medium_term_results['slope'] * (medium_term_results['data_length'] + trading_days_from_train) + medium_term_results['intercept']
+                lr_long = long_term_results['slope'] * (long_term_results['data_length'] + trading_days_from_train) + long_term_results['intercept']
+
+                sigma_med = medium_term_results['sigma']
+                sigma_long = long_term_results['sigma']
+
+                regressions_results = {'lr_med': lr_med, 'lr_long': lr_long, 'sigma_med': sigma_med, 'sigma_long': sigma_long}
+
+                # 1) Request intraday data for that day
                 app.ticker_event.clear()
+                date_str = simulation_date.strftime("%Y%m%d")
                 end_date_time = date_str + " 22:05:00 US/Eastern"
                 app.reqHistoricalData(
                     reqId=self.next_reqID,
                     contract=usTechStk(ticker),
                     endDateTime=end_date_time,
                     durationStr='1 D',
-                    barSizeSetting='10 mins',
+                    barSizeSetting='5 mins',
                     whatToShow='TRADES',
                     useRTH=1,
                     formatDate=2,
@@ -135,7 +149,7 @@ class LinRegSigmaStrategy(BaseStrategy):
                 if app.skip:
                     # if IB error => skip
                     app.skip = False
-                    self.results[date_str][ticker] = 0
+                    self.results[simulation_date][ticker] = 0
                     self.next_reqID += 1
                     continue
 
@@ -145,57 +159,49 @@ class LinRegSigmaStrategy(BaseStrategy):
                 self.next_reqID += 1
 
                 if intraday_df is None or intraday_df.empty:
-                    self.results[date_str][ticker] = 0
+                    self.results[simulation_date][ticker] = 0
                     continue
 
-                intraday_df = intraday_df.reset_index(drop=True)
+                daily_row = df.loc[simulation_date]
 
-                # daily_row for that date
-                daily_row = df.loc[date]
-
-                # 3) Simulate intraday logic
-                final_pnl = self.simulate_intraday(ticker, date_str, intraday_df, daily_row)
-                self.results[date_str][ticker] = final_pnl
+                # 2) Simulate intraday logic
+                final_pnl = self.simulate_intraday(ticker, simulation_date.date(), intraday_df, daily_row, regressions_results = regressions_results)
+                self.results[simulation_date][ticker] = final_pnl
 
         return self.results
 
-    def _compute_linregs_for_ticker(self, ticker: str, current_date: dt.datetime):
+    def _get_linear_reg_values(self, term_results, simulation_date):
+
+
+        lr = term_results['intercept'] + term_results['slope']*len()
+
+    def _compute_linregs_for_ticker(self, ticker: str, period_df: pd.DataFrame, simulation_date):
         """
         Recompute medium & long LR lines for `ticker` up to `current_date`
         using scikit-learn, computing sigma from raw Close values,
         and optionally generating future predictions.
         Store them in self.lr_info[ticker].
         """
-        df = self.daily_data.get(ticker, pd.DataFrame())
-        if df.empty:
-            return
 
-        # Slice up to current_date
-        df_sub = df.loc[:current_date].copy()
-        if len(df_sub) < self.long_lookback:
-            # Not enough data => skip
+        if period_df.empty:
             return
 
         # For medium
-        df_med = df_sub.tail(self.medium_lookback)
-        med_dict = self._fit_linreg_scikit(df_med)
+        medium_window = period_df.index[-1] - dt.timedelta(days=self.medium_lookback)
+        long_window = period_df.index[-1] - dt.timedelta(days=self.long_lookback)
 
-        # For long
-        df_long = df_sub.tail(self.long_lookback)
-        long_dict = self._fit_linreg_scikit(df_long)
+        df_med = period_df.loc[(period_df.index>= medium_window)]
+        df_long = period_df.loc[(period_df.index>= long_window)]
+
+        med_dict = self._fit_linreg_scikit(df_med, simulation_date)
+        long_dict = self._fit_linreg_scikit(df_long, simulation_date)
 
         # We'll store them in self.lr_info[ticker]
-        self.lr_info[ticker] = {
-            "medium_lr": med_dict["last_pred"],   # predicted value on last bar
-            "medium_sigma": med_dict["sigma"],    # stdev of y
-            "medium_future_preds": med_dict["future_preds"],
+        self.lr_info[ticker] = {'medium': med_dict, 'long': long_dict}
 
-            "long_lr": long_dict["last_pred"],
-            "long_sigma": long_dict["sigma"],
-            "long_future_preds": long_dict["future_preds"]
-        }
+        return med_dict, long_dict
 
-    def _fit_linreg_scikit(self, df_in: pd.DataFrame, days_ahead_to_predict=3) -> dict:
+    def _fit_linreg_scikit(self, df_in: pd.DataFrame, simulation_date) -> dict:
         """
         Fit a scikit-learn LinearRegression on df_in['Close'].
         x = 0..len-1
@@ -204,25 +210,15 @@ class LinRegSigmaStrategy(BaseStrategy):
             "slope": ...,
             "intercept": ...,
             "sigma": stdev_of_raw_close_values,
-            "last_pred": predicted_value_on_last_bar,
-            "future_preds": array of predictions for the next `future_days`
-          }
+            " data_length: len(df_in), so we can correctly get future predictions.
+
         """
-        if len(df_in) < 2:
-            return {
-                "slope": None,
-                "intercept": None,
-                "sigma": None,
-                "last_pred": None,
-                "future_preds": []
-            }
 
         # x is 0..N-1
         N = len(df_in)
         x = np.arange(N).reshape(-1, 1)
         y = df_in["Close"].values
 
-        # Fit scikit-learn
         reg = LinearRegression()
         reg.fit(x, y)
 
@@ -232,109 +228,103 @@ class LinRegSigmaStrategy(BaseStrategy):
         # Sigma = stdev of the raw close values, not the residuals
         sigma = np.std(y, ddof=1)
 
-        # predicted value for last bar
-        last_pred = reg.predict([[N - 1]])[0]
-
-        # optional future forecasts => next `future_days` bars
-        x_future = np.arange(N, N + days_ahead_to_predict).reshape(-1, 1)
-        future_preds = reg.predict(x_future)
-
         return {
             "slope": slope,
             "intercept": intercept,
             "sigma": sigma,
-            "last_pred": last_pred,
-            "future_preds": future_preds
+            'data_length' : len(df_in),
+            'prediction_date': simulation_date,
+
         }
 
-    def simulate_intraday(self, ticker: str, date_str: str,
-                          intraday_df: pd.DataFrame, daily_row: pd.Series, volume=100) -> float:
+    def simulate_intraday(self, ticker: str, date: dt.date, intraday_df: pd.DataFrame, daily_row: pd.Series, volume=1, **kwargs) -> float:
         """
         Bar-by-bar intraday logic:
          - We have medium_lr, long_lr from self.lr_info[ticker].
          - We'll do ±2σ or ±3.5σ rules for open/close signals.
          - Return final PnL from the last bar.
         """
-        lr_data = self.lr_info.get(ticker, {})
-        med_lr = lr_data.get("medium_lr", None)
-        med_sigma = lr_data.get("medium_sigma", None)
-        long_lr = lr_data.get("long_lr", None)
-        long_sigma = lr_data.get("long_sigma", None)
 
-        if any(x is None for x in [med_lr, med_sigma, long_lr, long_sigma]):
-            # No LR data => skip trades
-            return 0.0
+        lr_long = kwargs.get('lr_long', None)
+        lr_med = kwargs.get('lr_med', None)
+        sigma_long = kwargs.get('sigma_long', None)
+        sigma_med = kwargs.get('sigma_med', None)
 
         final_return = 0.0
-        volume = 2
 
         for i in range(len(intraday_df)):
             bar = intraday_df.iloc[i]
             price = bar["Close"]
 
-            # If no position => check open signals
-            if position[ticker] is None:
-                # Buy if price < (med_lr - 2σ) AND price < (long_lr - 2σ)
-                if (price < (med_lr - 2 * med_sigma)) and (price < (long_lr - 2 * long_sigma)):
-                    position = Position(contract=ticker, price=price, volume=volume, side="B", timestamp=date_str)
-                    open_trade = Trade(contract=ticker, price=price, volume=volume, side="B", timestamp=date_str, comment="Open long LR strategy intraday")
-                    self.trades.append(open_trade)
+            # 1) If we have NO position for this ticker => check open signals
+            if self.position[ticker] is None:
+                # Buy if price < (lr_med - 2*sigma_med) AND price < (lr_long - 2*sigma_long)
+                if ((lr_med is not None and sigma_med is not None) and (lr_long is not None and sigma_long is not None) and (price < lr_med - 2 * sigma_med) and (
+                        price < lr_long - 2 * sigma_long)):
+                    self.position[ticker] = Position(contract=ticker, price=price, volume=volume, side="B", timestamp=date)
+                    open_trade = Trade(contract=ticker, price=price, volume=volume, side="B", timestamp=date, comment="Open long LR strategy intraday")
+                    self.trades[ticker].append(open_trade)
 
-                # Sell if price > (med_lr + 2σ) AND price > (long_lr + 2σ)
-                elif (price > (med_lr + 2 * med_sigma)) and (price > (long_lr + 2 * long_sigma)):
-                    position = Position(contract=ticker, price=price, volume=volume, side="S", timestamp=date_str)
-                    open_trade = Trade(contract=ticker, price=price, volume=volume, side="S", timestamp=date_str, comment="Open short LR strategy intraday")
-                    self.trades.append(open_trade)
+                # Sell if price > (lr_med + 2*sigma_med) AND price > (lr_long + 2*sigma_long)
+                elif ((lr_med is not None and sigma_med is not None) and (lr_long is not None and sigma_long is not None) and (price > lr_med + 2 * sigma_med) and (
+                        price > lr_long + 2 * sigma_long)):
+                    self.position[ticker] = Position(contract=ticker, price=price, volume=volume, side="S", timestamp=date)
+                    open_trade = Trade(contract=ticker, price=price, volume=volume, side="S", timestamp=date, comment="Open short LR strategy intraday")
+                    self.trades[ticker].append(open_trade)
 
-            # If we have a position => check TP/SL
-            if position is not None:
-                if position.side == "B":
-                    # Take-profit if price >= med_lr
-                    if price >= med_lr:
-                        close_price = med_lr
-                        trade = Trade(contract=ticker, price=close_price, volume=position.volume, side="S", timestamp=date_str, comment="Close long: TP")
-                        position.reduce(trade)
-                        self.trades.append(trade)
+            # 2) If we DO have a position => check TP/SL
+            if self.position[ticker] is not None:
+                if self.position[ticker].side == "B":
 
-                        final_return = (close_price / position.avg_price) - 1
-                        position = None
+                    # Take-profit if price >= lr_med
+                    if lr_med is not None and price >= lr_med:
+                        close_price = lr_med
+                        trade = Trade(contract=ticker, price=close_price, volume=self.position[ticker].volume, side="S", timestamp=date, comment="Close long: TP")
+                        self.position[ticker].reduce(trade)
+                        self.trades[ticker].append(trade)
+
+                        final_return = (close_price / self.position[ticker].avg_price) - 1
+                        self.position[ticker] = None
                         break
-                    # Stop-loss if price <= med_lr - 3.5σ
-                    elif price <= (med_lr - 3.5 * med_sigma):
-                        close_price = med_lr - 3.5 * med_sigma
-                        trade = Trade(contract=ticker, price=close_price, volume=position.volume, side="S", timestamp=date_str, comment="Close long: SL")
-                        position.reduce(trade)
-                        self.trades.append(trade)
 
-                        final_return = (close_price / position.avg_price) - 1
-                        position = None
+                    # Stop-loss if price <= lr_med - 3.5*sigma_med
+                    elif lr_med is not None and sigma_med is not None and price <= (lr_med - 3.5 * sigma_med):
+                        close_price = lr_med - 3.5 * sigma_med
+                        trade = Trade(contract=ticker, price=close_price, volume=self.position[ticker].volume, side="S", timestamp=date, comment="Close long: SL")
+                        self.position[ticker].reduce(trade)
+                        self.trades[ticker].append(trade)
+
+                        final_return = (close_price / self.position[ticker].avg_price) - 1
+                        self.position[ticker] = None
                         break
                     else:
                         # floating PnL
-                        final_return = (price / position.avg_price) - 1
+                        final_return = (price / self.position[ticker].avg_price) - 1
 
-                else:  # short
-                    # TP => price <= med_lr
-                    if price <= med_lr:
-                        close_price = med_lr
-                        trade = Trade(contract=ticker, price=close_price, volume=position.volume, side="B", timestamp=date_str, comment="Close short: TP")
-                        position.reduce(trade)
-                        self.trades.append(trade)
-                        final_return = 1 - (close_price / position.avg_price)
-                        position = None
+                else:  # side == "S" (short)
+                    # Take-profit => price <= lr_med
+                    if lr_med is not None and price <= lr_med:
+                        close_price = lr_med
+                        trade = Trade(contract=ticker, price=close_price, volume=self.position[ticker].volume, side="B", timestamp=date, comment="Close short: TP")
+                        self.position[ticker].reduce(trade)
+                        self.trades[ticker].append(trade)
+
+                        final_return = 1 - (close_price / self.position[ticker].avg_price)
+                        self.position[ticker] = None
                         break
-                    # SL => price >= med_lr + 3.5σ
-                    elif price >= (med_lr + 3.5 * med_sigma):
-                        close_price = med_lr + 3.5 * med_sigma
-                        trade = Trade(contract=ticker, price=close_price, volume=position.volume, side="B", timestamp=date_str, comment="Close short: SL")
-                        position.reduce(trade)
-                        self.trades.append(trade)
 
-                        final_return = 1 - (close_price / position.avg_price)
-                        position = None
+                    # Stop-loss => price >= lr_med + 3.5*sigma_med
+                    elif lr_med is not None and sigma_med is not None and price >= (lr_med + 3.5 * sigma_med):
+                        close_price = lr_med + 3.5 * sigma_med
+                        trade = Trade(contract=ticker, price=close_price, volume=self.position[ticker].volume, side="B", timestamp=date, comment="Close short: SL")
+                        self.position[ticker].reduce(trade)
+                        self.trades[ticker].append(trade)
+
+                        final_return = 1 - (close_price / self.position[ticker].avg_price)
+                        self.position[ticker] = None
                         break
                     else:
                         # floating
-                        final_return = 1 - (price / position.avg_price)
+                        final_return = 1 - (price / self.position[ticker].avg_price)
 
         return final_return

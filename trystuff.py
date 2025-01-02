@@ -1,30 +1,124 @@
+import asyncio
+
+import PyQt5.QtWidgets as qt
+#import PySide6.QtWidgets as qt
+
+from ib_insync import IB, util
+from ib_insync.contract import *  # noqa
+
+
+class TickerTable(qt.QTableWidget):
+
+    headers = [
+        'symbol', 'bidSize', 'bid', 'ask', 'askSize',
+        'last', 'lastSize', 'close']
+
+    def __init__(self, parent=None):
+        qt.QTableWidget.__init__(self, parent)
+        self.conId2Row = {}
+        self.setColumnCount(len(self.headers))
+        self.setHorizontalHeaderLabels(self.headers)
+        self.setAlternatingRowColors(True)
+
+    def __contains__(self, contract):
+        assert contract.conId
+        return contract.conId in self.conId2Row
+
+    def addTicker(self, ticker):
+        row = self.rowCount()
+        self.insertRow(row)
+        self.conId2Row[ticker.contract.conId] = row
+        for col in range(len(self.headers)):
+            item = qt.QTableWidgetItem('-')
+            self.setItem(row, col, item)
+        item = self.item(row, 0)
+        item.setText(ticker.contract.symbol + (
+            ticker.contract.currency if ticker.contract.secType == 'CASH'
+            else ''))
+        self.resizeColumnsToContents()
+
+    def clearTickers(self):
+        self.setRowCount(0)
+        self.conId2Row.clear()
+
+    def onPendingTickers(self, tickers):
+        for ticker in tickers:
+            row = self.conId2Row[ticker.contract.conId]
+            for col, header in enumerate(self.headers):
+                if col == 0:
+                    continue
+                item = self.item(row, col)
+                val = getattr(ticker, header)
+                item.setText(str(val))
+
+
+class Window(qt.QWidget):
+
+    def __init__(self, host, port, clientId):
+        qt.QWidget.__init__(self)
+        self.edit = qt.QLineEdit('', self)
+        self.edit.editingFinished.connect(self.add)
+        self.table = TickerTable()
+        self.connectButton = qt.QPushButton('Connect')
+        self.connectButton.clicked.connect(self.onConnectButtonClicked)
+        layout = qt.QVBoxLayout(self)
+        layout.addWidget(self.edit)
+        layout.addWidget(self.table)
+        layout.addWidget(self.connectButton)
+
+        self.connectInfo = (host, port, clientId)
+        self.ib = IB()
+        self.ib.pendingTickersEvent += self.table.onPendingTickers
+
+    def add(self, text=''):
+        text = text or self.edit.text()
+        if text:
+            contract = eval(text)
+            if (contract and self.ib.qualifyContracts(contract)
+                    and contract not in self.table):
+                ticker = self.ib.reqMktData(contract, '', False, False, None)
+                self.table.addTicker(ticker)
+            self.edit.setText(text)
+
+    def onConnectButtonClicked(self, _):
+        if self.ib.isConnected():
+            self.ib.disconnect()
+            self.table.clearTickers()
+            self.connectButton.setText('Connect')
+        else:
+            self.ib.connect(*self.connectInfo)
+            self.ib.reqMarketDataType(2)
+            self.connectButton.setText('Disonnect')
+            for symbol in (
+                    'EURUSD', 'USDJPY', 'EURGBP', 'USDCAD',
+                    'EURCHF', 'AUDUSD', 'NZDUSD'):
+                self.add(f"Forex('{symbol}')")
+            self.add("Stock('TSLA', 'SMART', 'USD')")
+
+    def closeEvent(self, ev):
+        loop = util.getLoop()
+        loop.stop()
+
+
+# if __name__ == '__main__':
+#     util.patchAsyncio()
+#     util.useQt()
+#     # util.useQt('PySide6')
+#     window = Window('127.0.0.1', 7497, 1)
+#     window.resize(600, 400)
+#     window.show()
+#     IB.run()
+
 from ib_insync import *
 # util.startLoop()  # uncomment this line when in a notebook
-from ibapi.contract import Contract
-import time
-
-
-def create_nasdaq_contract(symbol):
-    """Create a contract object for a NASDAQ-listed stock."""
-    contract = Contract()
-    contract.symbol = symbol  # Replace with any NASDAQ stock symbol
-    contract.secType = "STK"  # Security type: Stock
-    contract.exchange = "SMART"  # Use SMART routing for NASDAQ stocks
-    contract.primaryExchange = "NASDAQ"  # Specify NASDAQ as primary
-    contract.currency = "USD"  # Stock is priced in USD
-    return contract
-
 
 ib = IB()
-ib.connect('127.0.0.1', 7497, clientId=24)
+ib.connect('127.0.0.1', 7497, clientId=1)
 
-contract = create_nasdaq_contract('AAPL')
-bars=  ib.reqHistoricalData(
+contract = Stock('AMD', "SMART", "USD")
+bars = ib.reqHistoricalData(
     contract, endDateTime='', durationStr='30 D',
     barSizeSetting='1 hour', whatToShow='MIDPOINT', useRTH=True)
-
-# Wait for data to be fetched
-time.sleep(1)
 
 # convert to pandas dataframe (pandas needs to be installed):
 df = util.df(bars)
