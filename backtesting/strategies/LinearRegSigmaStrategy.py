@@ -6,6 +6,7 @@ from typing import Dict, List
 
 from sklearn.linear_model import LinearRegression
 from backtesting.backtester_app import *
+from backtesting.ib_client import *
 
 from backtesting.strategies.base import BaseStrategy
 from backtesting.pos_order_trade import Position, Trade
@@ -22,6 +23,7 @@ class LinRegSigmaStrategy(BaseStrategy):
         super(LinRegSigmaStrategy,self).__init__()
         self.start_date = start_date
         self.end_date = end_date
+        self.ib = IBClient(port=7497, client_id=25)
 
         self.medium_lookback = medium_lookback
         self.long_lookback = long_lookback
@@ -33,12 +35,15 @@ class LinRegSigmaStrategy(BaseStrategy):
         self.trades = {}
         self.position = {}
 
-        # For requesting intraday data
-        self.next_reqID = None
-
         # For storing LR info => {ticker: {...}}
         self.last_train_date = None
         self.lr_info = {}
+
+    def connect_to_ib(self):
+        self.ib_client.connect()
+
+    def disconnect_from_ib(self):
+        self.ib_client.disconnect()
 
     def prepare_data(self, app, tickers: List[str]) -> Dict[str, pd.DataFrame]:
         """
@@ -46,41 +51,21 @@ class LinRegSigmaStrategy(BaseStrategy):
         2) Filter by [self.start_date, self.end_date]
         3) Return a dict {ticker: DataFrame}
         """
-        for idx, ticker in enumerate(tickers):
-
+        for ticker in tickers:
             self.position[ticker] = None
             self.trades[ticker] = []
 
-            app.ticker_event.clear()
-            end_date_str = self.end_date.strftime("%Y%m%d") + " 22:05:00 US/Eastern"
-            app.reqHistoricalData(
-                reqId=idx,
-                contract=usTechStk(ticker),
-                endDateTime=end_date_str,      # up to "now"
-                durationStr='1 Y',   # or "2 Y", etc.
-                barSizeSetting='1 day',
-                whatToShow='TRADES',
-                useRTH=1,
-                formatDate=1,
-                keepUpToDate=0,
-                chartOptions=[]
-            )
-            app.ticker_event.wait()
-            if app.skip:
-                print(f"Skipping daily data for {ticker} due to IB error.")
-                app.skip = False
-
-        time.sleep(0.5)
-        for idx, ticker in enumerate(tickers):
-            df = app.data.get(idx, None)
-            if df is not None and not df.empty:
-                # Filter by start/end
-                data_from = self.get_data_from()
-                df = df.loc[(df.index >= data_from) & (df.index <= self.end_date)]
-                self.daily_data[ticker] = df
-
-            else:
+            # Example: fetch 1 year of daily data up to self.end_date
+            df = self.ib_client.fetch_historical_data(symbol=ticker, end_date=self.end_date, duration_str='1 Y', bar_size='1 day')
+            if df.empty:
+                print(f"No daily data returned for {ticker}.")
                 self.daily_data[ticker] = pd.DataFrame()
+                continue
+
+            # Filter by start_date (adjusted for lookback) and end_date
+            data_from = self.get_data_from()
+            df = df.loc[(df.index >= data_from) & (df.index <= self.end_date)]
+            self.daily_data[ticker] = df
 
         return self.daily_data
 
@@ -100,11 +85,10 @@ class LinRegSigmaStrategy(BaseStrategy):
           3) Call simulate_intraday(...) to compute a daily PnL,
           4) Store in self.results[date_str][ticker].
         """
-        self.next_reqID = 1000
         trading_days_from_train = 0
         medium_term_results, long_term_results = {}, {}
 
-        for ticker, df in daily_data.items():
+        for ticker, df in self.daily_data.items():
             if df.empty:
                 continue
 
@@ -114,7 +98,7 @@ class LinRegSigmaStrategy(BaseStrategy):
                 if simulation_date not in self.results:
                     self.results[simulation_date] = {}
 
-                if simulation_date.weekday() == 4 or self.next_reqID == 1000:
+                if simulation_date.weekday() == 4 or simulation_index[0]== simulation_date:
                     period_df = df.loc[df.index < simulation_date]
                     medium_term_results, long_term_results = self._compute_linregs_for_ticker(ticker, period_df, simulation_date)
                     self.last_train_date = simulation_date
@@ -123,43 +107,28 @@ class LinRegSigmaStrategy(BaseStrategy):
                 trading_days_from_train += 1
                 lr_med = medium_term_results['slope'] * (medium_term_results['data_length'] + trading_days_from_train) + medium_term_results['intercept']
                 lr_long = long_term_results['slope'] * (long_term_results['data_length'] + trading_days_from_train) + long_term_results['intercept']
-
                 sigma_med = medium_term_results['sigma']
                 sigma_long = long_term_results['sigma']
 
                 regressions_results = {'lr_med': lr_med, 'lr_long': lr_long, 'sigma_med': sigma_med, 'sigma_long': sigma_long}
 
-                # 1) Request intraday data for that day
-                app.ticker_event.clear()
-                date_str = simulation_date.strftime("%Y%m%d")
-                end_date_time = date_str + " 22:05:00 US/Eastern"
-                app.reqHistoricalData(reqId=self.next_reqID, contract=usTechStk(ticker), endDateTime=end_date_time, durationStr='1 D', barSizeSetting='5 mins',
-                    whatToShow='TRADES', useRTH=1, formatDate=1, keepUpToDate=0, chartOptions=[])
-                app.ticker_event.wait()
+                end_date_for_intraday = simulation_date.replace(hour=22, minute=5, second=0)
+                intraday_df = self.ib_client.fetch_historical_data(symbol=ticker, end_date=end_date_for_intraday, duration_str='1 D', bar_size='5 mins')
 
-                if app.skip:
-                    # if IB error => skip
-                    app.skip = False
-                    self.results[simulation_date][ticker] = 0
-                    self.next_reqID += 1
+                if intraday_df.empty:
+                    self.results[simulation_date][ticker] = 0.0
                     continue
 
-                time.sleep(0.3)
-
-                intraday_df = app.data.get(self.next_reqID, None)
-                self.next_reqID += 1
-
-                if intraday_df is None or intraday_df.empty:
-                    self.results[simulation_date][ticker] = 0
-                    continue
-
+                # 2) Retrieve daily row if needed
                 daily_row = df.loc[simulation_date]
 
-                # 2) Simulate intraday logic
+                # 3) Run your intraday simulation
                 final_pnl = self.simulate_intraday(ticker, simulation_date.date(), intraday_df, daily_row, regressions_results=regressions_results)
+
+                # Store result
                 self.results[simulation_date][ticker] = final_pnl
 
-        return self.results
+            return self.results
 
     def _get_linear_reg_values(self, term_results, simulation_date):
 

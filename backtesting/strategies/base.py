@@ -1,6 +1,6 @@
 import pandas as pd
-from abc import ABC, abstractmethod
-from typing import Dict, List, Optional
+from typing import Dict, Optional
+from backtesting.ib_client import *
 
 
 class BaseStrategy:
@@ -9,6 +9,9 @@ class BaseStrategy:
 
         self.start_date = None
         self.end_date = None
+
+
+        self.ib_client = IBClient(port=7497, client_id=25)
 
 
     def prepare_data(self, app, tickers) -> Dict[str, pd.DataFrame]:

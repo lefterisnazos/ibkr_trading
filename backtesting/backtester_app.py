@@ -6,6 +6,18 @@ from ibapi.client import EClient
 from ibapi.wrapper import EWrapper
 from ibapi.contract import Contract
 
+from ib_insync import *
+
+class BacktesterApp_insync:
+    def __init__(self, host='127.0.0.1', port=7497, clientId=25):
+        self.ib = IB()
+        self.ib.connect(host, port, clientId)
+
+
+
+
+
+
 
 class BacktesterApp(EWrapper, EClient):
     """
