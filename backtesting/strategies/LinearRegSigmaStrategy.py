@@ -23,7 +23,7 @@ class LinRegSigmaStrategy(BaseStrategy):
         super(LinRegSigmaStrategy,self).__init__()
         self.start_date = start_date
         self.end_date = end_date
-        self.ib = IBClient(port=7497, client_id=25)
+        self.ib_client = IBClient(port=7497, client_id=25)
         self.connect_to_ib()
 
         self.medium_lookback = medium_lookback
