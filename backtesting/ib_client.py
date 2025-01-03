@@ -8,7 +8,7 @@ class IBClient:
     Encapsulates all IB connection and data-fetching logic using ib_insync.
     """
 
-    def __init__(self, host='127.0.0.1', port=7497, client_id=25):
+    def __init__(self, host='127.0.0.1', port=7497, client_id=26):
         self.host = host
         self.port = port
         self.client_id = client_id
@@ -88,3 +88,21 @@ class IBClient:
         df.sort_index(inplace=True)
         df.index = pd.DatetimeIndex(df.index)
         return df
+
+# ib = IBClient()
+# ib.connect()
+# timestamp = pd.Timestamp('2024-01-02 22:05:00')
+# x1 = time.time()
+# intraday_df = ib.fetch_historical_data(symbol='JAZZ', end_date=timestamp, duration_str='25 D', bar_size='5 mins')
+# y1= time.time()
+#
+# x2 = time.time()
+# for _ in range(25):
+#
+#     intraday_df = ib.fetch_historical_data(symbol='JAZZ', end_date=timestamp, duration_str='1 D', bar_size='5 mins')
+# y2 = time.time()
+#
+# diff1 = y1- x1
+# diff2  = y2-x2
+z=2
+

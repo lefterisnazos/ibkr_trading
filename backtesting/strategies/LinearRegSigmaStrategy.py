@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import datetime as dt
 from typing import Dict, List
+from tqdm import tqdm
 
 from sklearn.linear_model import LinearRegression
 from backtesting.ib_client import *
@@ -45,9 +46,6 @@ class LinRegSigmaStrategy(BaseStrategy):
 
     def disconnect_from_ib(self):
         self.ib_client.disconnect()
-
-
-
 
     def prepare_data(self, tickers: List[str]) -> Dict[str, pd.DataFrame]:
         """
@@ -93,12 +91,15 @@ class LinRegSigmaStrategy(BaseStrategy):
         trading_days_from_train = 0
         medium_term_results, long_term_results = {}, {}
 
-        for ticker, df in self.daily_data.items():
+        for ticker, df in tqdm(self.daily_data.items(), desc="Tickers"):
             if df.empty:
                 continue
 
             simulation_index = df[df.index >= self.start_date].index
-            for simulation_date in simulation_index:
+
+            for simulation_date in tqdm(simulation_index, desc=f"Date: {ticker}", leave=False):
+
+                print(f"Simulating date: {simulation_date} for ticker: {ticker}")
 
                 if simulation_date not in self.results:
                     self.results[simulation_date] = {}
@@ -125,7 +126,7 @@ class LinRegSigmaStrategy(BaseStrategy):
                     continue
 
                 # 3) Run your intraday simulation
-                self.simulate_intraday(ticker, simulation_date.date(), intraday_df, volume=1, regressions_results=regressions_results)
+                self.simulate_intraday(ticker, simulation_date.date(), intraday_df, volume=100, regressions_results=regressions_results)
 
         self.finalize_positions()
 
@@ -144,16 +145,13 @@ class LinRegSigmaStrategy(BaseStrategy):
             return
 
         # For medium
-        medium_window = period_df.index[-1] - dt.timedelta(days=self.medium_lookback)
-        long_window = period_df.index[-1] - dt.timedelta(days=self.long_lookback)
-
-        df_med = period_df.loc[(period_df.index>= medium_window)]
-        df_long = period_df.loc[(period_df.index>= long_window)]
+        df_med = period_df.iloc[-self.medium_lookback:] if len(period_df) >= self.medium_lookback else period_df
+        df_long = period_df.iloc[-self.long_lookback:] if len(period_df) >= self.long_lookback else period_df
 
         med_dict = self._fit_linreg_scikit(df_med, simulation_date)
         long_dict = self._fit_linreg_scikit(df_long, simulation_date)
 
-        # We'll store them in self.lr_info[ticker]
+        # store in self.lr_info
         self.lr_info[ticker] = {'medium': med_dict, 'long': long_dict}
 
         return med_dict, long_dict
@@ -207,13 +205,13 @@ class LinRegSigmaStrategy(BaseStrategy):
             # Open signals if no position
             if self.position[ticker] is None:
                 # e.g. go Long if ...
-                if (price < lr_med - 2 * sigma_med) and (price < lr_long - 2 * sigma_long):
+                if (price < lr_med - 1.5 * sigma_med) and (price < lr_long - 1.5 * sigma_long):
                     self.position[ticker] = Position(contract=ticker, price=price, volume=volume, side="B", timestamp=timestamp)
                     open_trade = Trade(contract=ticker, price=virtual_buy_price, volume=volume, side="B", timestamp=timestamp, comment="Open long")
                     self.open_position(open_trade, ticker)
 
                 # go Short if ...
-                elif (price > lr_med + 2 * sigma_med) and (price > lr_long + 2 * sigma_long):
+                elif (price > lr_med + 1 * sigma_med) and (price > lr_long + 1 * sigma_long):
                     self.position[ticker] = Position(contract=ticker, price=price, volume=volume, side="S", timestamp=timestamp)
                     open_trade = Trade(contract=ticker, price=virtual_sell_price, volume=volume, side="S", timestamp=timestamp, comment="Open short")
                     self.open_position(open_trade, ticker)
@@ -228,7 +226,7 @@ class LinRegSigmaStrategy(BaseStrategy):
                         break
 
                     # SL => price <= lr_med - 3.5*sigma_med
-                    elif price <= (lr_med - 3.5 * sigma_med):
+                    elif price <= (lr_med - 2 * sigma_med):
                         trade = Trade(contract=ticker, price=virtual_sell_price, volume=self.position[ticker].volume, side="S", timestamp=timestamp, comment="Close long: SL")
                         self.reduce_position(trade, ticker)
                         break
@@ -244,7 +242,7 @@ class LinRegSigmaStrategy(BaseStrategy):
                         break
 
                     # SL => price >= lr_med + 3.5*sigma_med
-                    elif price >= (lr_med + 3.5 * sigma_med):
+                    elif price >= (lr_med + 2 * sigma_med):
                         trade = Trade(contract=ticker, price=virtual_buy_price, volume=self.position[ticker].volume, side="B", timestamp=timestamp, comment="Close short: SL")
                         self.reduce_position(trade, ticker)
                         break
