@@ -30,8 +30,6 @@ class Backtester:
         # 2) Run the strategy
         self.trades, self.pnl = self.strategy.run_strategy()
 
-        x=2
-
     def _convert_trades_to_df(self, trades_list):
         """
         Convert the list of Trade objects to a pandas DataFrame.

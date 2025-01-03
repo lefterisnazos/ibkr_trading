@@ -4,6 +4,8 @@ import numpy as np
 import datetime as dt
 from typing import Dict, List
 from tqdm import tqdm
+from progress.bar import Bar
+from alive_progress import alive_bar
 
 from sklearn.linear_model import LinearRegression
 from backtesting.ib_client import *
@@ -77,7 +79,7 @@ class LinRegSigmaStrategy(BaseStrategy):
         If you need an earlier start to fetch enough data for the longest lookback,
         you could do: return self.start_date - dt.timedelta(days=self.long_lookback).
         """
-        return self.start_date - dt.timedelta(days=self.long_lookback)
+        return self.start_date - dt.timedelta(days=self.long_lookback*2)
 
 
     def run_strategy(self) -> Dict[str, Dict[str, float]]:
@@ -96,37 +98,42 @@ class LinRegSigmaStrategy(BaseStrategy):
                 continue
 
             simulation_index = df[df.index >= self.start_date].index
+            intraday_all = self.ib_client.fetch_intraday_in_chunks(ticker=ticker, start=simulation_index[0], end=simulation_index[-1] + dt.timedelta(days=1), bar_size="5 mins", chunk_size_request='1 M')
+            # intraday_all.index = intraday_all.index.tz_localize(None)
 
-            for simulation_date in tqdm(simulation_index, desc=f"Date: {ticker}", leave=False):
+            if intraday_all.empty:
+                print(f"No intraday data for ticker {ticker}")
+                continue
+            with alive_bar(len(simulation_index), title=f"SimDates for {ticker}") as bar:
+                #for simulation_date in tqdm(simulation_index, desc=f"Date: {ticker}", leave=False):
+                for simulation_date in simulation_index:
 
-                print(f"Simulating date: {simulation_date} for ticker: {ticker}")
+                    #print(f"Simulating date: {simulation_date} for ticker: {ticker}")
 
-                if simulation_date not in self.results:
-                    self.results[simulation_date] = {}
+                    if simulation_date not in self.results:
+                        self.results[simulation_date] = {}
 
-                if simulation_date.weekday() == 4 or simulation_index[0]== simulation_date:
-                    period_df = df.loc[df.index < simulation_date]
-                    medium_term_results, long_term_results = self._compute_linregs_for_ticker(ticker, period_df, simulation_date)
-                    self.last_train_date = simulation_date
-                    trading_days_from_train = 0
+                    if simulation_date.weekday() == 4 or simulation_index[0]== simulation_date:
+                        period_df = df.loc[df.index < simulation_date]
+                        medium_term_results, long_term_results = self._compute_linregs_for_ticker(ticker, period_df, simulation_date)
+                        self.last_train_date = simulation_date
+                        trading_days_from_train = 0
 
-                trading_days_from_train += 1
-                lr_med = medium_term_results['slope'] * (medium_term_results['data_length'] + trading_days_from_train) + medium_term_results['intercept']
-                lr_long = long_term_results['slope'] * (long_term_results['data_length'] + trading_days_from_train) + long_term_results['intercept']
-                sigma_med = medium_term_results['sigma']
-                sigma_long = long_term_results['sigma']
+                    trading_days_from_train += 1
+                    lr_med = medium_term_results['slope'] * (medium_term_results['data_length'] + trading_days_from_train) + medium_term_results['intercept']
+                    lr_long = long_term_results['slope'] * (long_term_results['data_length'] + trading_days_from_train) + long_term_results['intercept']
+                    sigma_med = medium_term_results['sigma']
+                    sigma_long = long_term_results['sigma']
 
-                regressions_results = {'lr_med': lr_med, 'lr_long': lr_long, 'sigma_med': sigma_med, 'sigma_long': sigma_long}
+                    regressions_results = {'lr_med': lr_med, 'lr_long': lr_long, 'sigma_med': sigma_med, 'sigma_long': sigma_long}
 
-                end_date_for_intraday = simulation_date.replace(hour=22, minute=5, second=0)
-                intraday_df = self.ib_client.fetch_historical_data(symbol=ticker, end_date=end_date_for_intraday, duration_str='1 D', bar_size='5 mins')
-
-                if intraday_df.empty:
-                    self.results[simulation_date][ticker] = 0.0
-                    continue
-
-                # 3) Run your intraday simulation
-                self.simulate_intraday(ticker, simulation_date.date(), intraday_df, volume=100, regressions_results=regressions_results)
+                    day_start = simulation_date.tz_localize('US/Eastern')
+                    day_end  = (simulation_date + pd.Timedelta(days=1)).tz_localize('US/Eastern')
+                    intraday_slice = intraday_all.loc[(intraday_all.index >= day_start) &
+                                                      (intraday_all.index < day_end)]
+                    # 3) Run your intraday simulation
+                    self.simulate_intraday(ticker, simulation_date.date(), intraday_slice, volume=100, regressions_results=regressions_results)
+                    bar()
 
         self.finalize_positions()
 

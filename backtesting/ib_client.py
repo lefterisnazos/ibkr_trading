@@ -8,7 +8,7 @@ class IBClient:
     Encapsulates all IB connection and data-fetching logic using ib_insync.
     """
 
-    def __init__(self, host='127.0.0.1', port=7497, client_id=26):
+    def __init__(self, host='127.0.0.1', port=7497, client_id=25):
         self.host = host
         self.port = port
         self.client_id = client_id
@@ -88,6 +88,57 @@ class IBClient:
         df.sort_index(inplace=True)
         df.index = pd.DatetimeIndex(df.index)
         return df
+
+    def fetch_intraday_in_chunks(self, ticker: str, start: pd.Timestamp, end: pd.Timestamp, bar_size: str = "5 mins", chunk_size_request: str = "2 M") -> pd.DataFrame:
+        """
+        Fetch all intraday data for 'ticker' from 'start' to 'end',
+        in 'chunk_size_request' chunks (e.g. '2 M' => 2 months),
+        and concatenate into a single DataFrame.
+
+        :param ticker: The symbol (e.g. "AAPL").
+        :param start:  A pandas Timestamp or datetime representing the earliest date/time.
+        :param end:    A pandas Timestamp or datetime representing the latest date/time.
+        :param bar_size: e.g. "5 mins"
+        :param chunk_size_request: e.g. "2 M", "1 D", "3 W". Any IB-compatible duration string.
+        :return: A DataFrame of intraday bars in [start, end].
+        """
+
+        chunks = []
+        current_end = end
+
+        # We'll iterate backward from 'end' until we reach 'start'
+        while current_end > start:
+
+            df_chunk = self.fetch_historical_data(symbol=ticker, end_date=current_end,  duration_str=chunk_size_request, bar_size=bar_size, what_to_show='TRADES', use_rth=True)
+
+            if df_chunk.empty:
+                break
+
+            chunks.append(df_chunk)
+
+            # Identify the earliest time in this chunk
+            earliest_in_chunk = df_chunk.index.min().tz_localize(None)
+            if earliest_in_chunk >= current_end:
+                # We didn't get older data => nothing left
+                break
+
+            # Move current_end to just before earliest_in_chunk
+            # so next request fetches older data
+            # e.g. subtract 1 bar or a few minutes buffer
+            current_end = earliest_in_chunk - pd.Timedelta(minutes=5)
+
+        if not chunks:
+            return pd.DataFrame()
+
+        # Concatenate
+        all_intraday = pd.concat(chunks)
+        all_intraday.sort_index(inplace=True)
+        all_intraday = all_intraday[~all_intraday.index.duplicated(keep='first')]
+
+        start = start.tz_localize('US/Eastern')  # or .tz_convert(...)
+        end = end.tz_localize('US/Eastern')
+
+        return all_intraday[(all_intraday.index >= start) & (all_intraday.index <= end)]
 
 # ib = IBClient()
 # ib.connect()
