@@ -30,6 +30,7 @@ class Trade:
         self.timestamp = timestamp
         self.comment = comment
         self.realized_pnl = 0
+        self.realized_return = 0
 
     def __repr__(self):
         return (f"Trade({self.contract}, {self.side}, vol={self.volume}, "
@@ -74,8 +75,10 @@ class Position:
         # Realized PnL depends on side
         if self.side == "B":  # long
             realized_pnl = (trade.price - self.avg_price) * min(self.volume, trade.volume)
+            realized_return = realized_pnl / (self.avg_price * min(self.volume, trade.volume))
         else:  # short
             realized_pnl = (self.avg_price - trade.price) * min(self.volume, trade.volume)
+            realized_return = realized_pnl / (self.avg_price * min(self.volume, trade.volume))
 
         # If trade volume > position volume => flipping side
         if trade.volume > self.volume:
@@ -90,6 +93,7 @@ class Position:
 
         self.last_update = trade.timestamp
         trade.realized_pnl = realized_pnl
+        trade.realized_return = realized_return
 
     def is_open(self):
         return self.volume > 0

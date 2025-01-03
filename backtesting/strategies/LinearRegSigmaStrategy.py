@@ -58,6 +58,7 @@ class LinRegSigmaStrategy(BaseStrategy):
         for ticker in tickers:
             self.position[ticker] = None
             self.trades[ticker] = []
+            self.pnl[ticker] = []
 
             # Example: fetch 1 year of daily data up to self.end_date
             df = self.ib_client.fetch_historical_data(symbol=ticker, end_date=self.end_date, duration_str='1 Y', bar_size='1 day')
@@ -124,14 +125,11 @@ class LinRegSigmaStrategy(BaseStrategy):
                     continue
 
                 # 3) Run your intraday simulation
-                final_pnl = self.simulate_intraday(ticker, simulation_date.date(), intraday_df, regressions_results=regressions_results)
-
-                # Store result
-                self.results[simulation_date][ticker] = final_pnl
+                self.simulate_intraday(ticker, simulation_date.date(), intraday_df, volume=1, regressions_results=regressions_results)
 
         self.finalize_positions()
 
-        return self.results, self.trades, self.pnl
+        return self.trades, self.pnl
 
 
     def _compute_linregs_for_ticker(self, ticker: str, period_df: pd.DataFrame, simulation_date):
@@ -191,13 +189,12 @@ class LinRegSigmaStrategy(BaseStrategy):
         }
 
     def simulate_intraday(self, ticker: str, date: dt.date, intraday_df: pd.DataFrame, volume=1, **kwargs) -> float:
+
         regressions_results = kwargs.get("regressions_results", None)
         lr_long = regressions_results.get("lr_long")
         lr_med = regressions_results.get("lr_med")
         sigma_long = regressions_results.get("sigma_long")
         sigma_med = regressions_results.get("sigma_med")
-
-        final_pnl = 0.0
 
         for i in range(len(intraday_df)):
             bar = intraday_df.iloc[i]
@@ -226,59 +223,39 @@ class LinRegSigmaStrategy(BaseStrategy):
                 if self.position[ticker].side == "B":
                     # TP => price >= lr_med
                     if price >= lr_med:
-                        trade = Trade(contract=ticker, price=virtual_sell_price, volume=self.position[ticker].volume, side="S", timestamp=timestamp,
-                                      comment="Close long: TP")
+                        trade = Trade(contract=ticker, price=virtual_sell_price, volume=self.position[ticker].volume, side="S", timestamp=timestamp,comment="Close long: TP")
                         self.reduce_position(trade, ticker)
-                        final_pnl = (virtual_sell_price / self.position[ticker].avg_price) - 1
-                        # position is closed
                         break
 
                     # SL => price <= lr_med - 3.5*sigma_med
                     elif price <= (lr_med - 3.5 * sigma_med):
-                        trade = Trade(contract=ticker, price=virtual_sell_price, volume=self.position[ticker].volume, side="S", timestamp=timestamp,
-                                      comment="Close long: SL")
+                        trade = Trade(contract=ticker, price=virtual_sell_price, volume=self.position[ticker].volume, side="S", timestamp=timestamp, comment="Close long: SL")
                         self.reduce_position(trade, ticker)
-                        final_pnl = (virtual_sell_price / self.position[ticker].avg_price) - 1
                         break
 
                     else:
-                        # floating intraday
-                        final_pnl = (price / self.position[ticker].avg_price) - 1
+                        pass
 
                 else:  # short side
                     # TP => price <= lr_med
                     if price <= lr_med:
-                        trade = Trade(contract=ticker, price=virtual_buy_price, volume=self.position[ticker].volume, side="B", timestamp=timestamp,
-                                      comment="Close short: TP")
+                        trade = Trade(contract=ticker, price=virtual_buy_price, volume=self.position[ticker].volume, side="B", timestamp=timestamp, comment="Close short: TP")
                         self.reduce_position(trade, ticker)
-                        final_pnl = 1 - (virtual_buy_price / self.position[ticker].avg_price)
                         break
 
                     # SL => price >= lr_med + 3.5*sigma_med
                     elif price >= (lr_med + 3.5 * sigma_med):
-                        trade = Trade(contract=ticker, price=virtual_buy_price, volume=self.position[ticker].volume, side="B", timestamp=timestamp,
-                                      comment="Close short: SL")
+                        trade = Trade(contract=ticker, price=virtual_buy_price, volume=self.position[ticker].volume, side="B", timestamp=timestamp, comment="Close short: SL")
                         self.reduce_position(trade, ticker)
-                        final_pnl = 1 - (virtual_buy_price / self.position[ticker].avg_price)
                         break
 
                     else:
-                        # floating intraday
-                        final_pnl = 1 - (price / self.position[ticker].avg_price)
-
-        # after looping all intraday bars: if still open => mark PnL to the last bar's close
-        if self.position[ticker] is not None:
-            last_bar = intraday_df.iloc[-1]
-            last_price = last_bar["Close"]
-            if self.position[ticker].side == "B":
-                final_pnl = (last_price / self.position[ticker].avg_price) - 1
-            else:
-                final_pnl = 1 - (last_price / self.position[ticker].avg_price)
-
-        return final_pnl
+                        pass
 
     def reduce_position(self, trade: Trade, ticker: str = None):
         self.position[ticker].reduce(trade)
+        if self.position[ticker].volume == 0:
+            self.position[ticker] = None
         self.pnl[ticker].append(trade)
         self.trades[ticker].append(trade)
         print(trade)

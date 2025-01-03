@@ -3,13 +3,7 @@ import time
 import pandas as pd
 from typing import Dict, List
 import datetime as dt
-
-from benchmarks.benchmarks import (
-    AbsoluteReturnEvaluation,
-    WinRateEvaluation,
-    MeanReturnWinner,
-    MeanReturnLoser
-)
+from backtesting.benchmarks import *
 
 class Backtester:
     def __init__(self, strategy, tickers):
@@ -34,9 +28,9 @@ class Backtester:
         self.daily_data = self.strategy.prepare_data(self.tickers)
 
         # 2) Run the strategy
-        self.final_results, self.trades, self.pnl = self.strategy.run_strategy()
+        self.trades, self.pnl = self.strategy.run_strategy()
 
-        # 3) Convert the strategy’s trade log to a DataFrame        self.trades_df = self._convert_trades_to_df(self.strategy.trades)
+        x=2
 
     def _convert_trades_to_df(self, trades_list):
         """
