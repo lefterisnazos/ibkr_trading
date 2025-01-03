@@ -16,7 +16,7 @@ if __name__ == "__main__":
     end_date = dt.datetime(2024, 2, 1)
 
     # 4) Instantiate the strategy
-    strategy = LinRegSigmaStrategy(start_date, end_date)
+    strategy = LinRegSigmaStrategy(start_date, end_date, 5, 15)
 
     # 5) Instantiate the backtester with date range
     backtester = Backtester(

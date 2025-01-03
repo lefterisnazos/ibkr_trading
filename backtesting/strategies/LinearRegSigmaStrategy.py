@@ -188,7 +188,7 @@ class LinRegSigmaStrategy(BaseStrategy):
 
         }
 
-    def simulate_intraday(self, ticker: str, date: dt.date, intraday_df: pd.DataFrame, volume=1, **kwargs) -> float:
+    def simulate_intraday(self, ticker: str, date: dt.date, intraday_df: pd.DataFrame, volume=100, **kwargs) -> float:
 
         regressions_results = kwargs.get("regressions_results", None)
         lr_long = regressions_results.get("lr_long")
