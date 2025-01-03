@@ -5,7 +5,6 @@ import datetime as dt
 from typing import Dict, List
 
 from sklearn.linear_model import LinearRegression
-from backtesting.backtester_app import *
 from backtesting.ib_client import *
 
 from backtesting.strategies.base import BaseStrategy
@@ -46,7 +45,7 @@ class LinRegSigmaStrategy(BaseStrategy):
     def disconnect_from_ib(self):
         self.ib_client.disconnect()
 
-    def prepare_data(self,  tickers: List[str]) -> Dict[str, pd.DataFrame]:
+    def prepare_data(self, tickers: List[str]) -> Dict[str, pd.DataFrame]:
         """
         1) Request daily data for each ticker
         2) Filter by [self.start_date, self.end_date]
@@ -65,7 +64,7 @@ class LinRegSigmaStrategy(BaseStrategy):
 
             # Filter by start_date (adjusted for lookback) and end_date
             data_from = self.get_data_from()
-            df = df.loc[(df.index >= data_from) & (df.index <= self.end_date)]
+            df = df.loc[(df.index >= data_from) & (df.index<= self.end_date)]
             self.daily_data[ticker] = df
 
         return self.daily_data
@@ -119,9 +118,6 @@ class LinRegSigmaStrategy(BaseStrategy):
                 if intraday_df.empty:
                     self.results[simulation_date][ticker] = 0.0
                     continue
-
-                # 2) Retrieve daily row if needed
-                daily_row = df.loc[simulation_date]
 
                 # 3) Run your intraday simulation
                 final_pnl = self.simulate_intraday(ticker, simulation_date.date(), intraday_df, daily_row, regressions_results=regressions_results)
@@ -188,7 +184,7 @@ class LinRegSigmaStrategy(BaseStrategy):
 
         }
 
-    def simulate_intraday(self, ticker: str, date: dt.date, intraday_df: pd.DataFrame, daily_row: pd.Series, volume=1, **kwargs) -> float:
+    def simulate_intraday(self, ticker: str, date: dt.date, intraday_df: pd.DataFrame, volume=1, **kwargs) -> float:
         """
         Bar-by-bar intraday logic:
          - We have medium_lr, long_lr from self.lr_info[ticker].

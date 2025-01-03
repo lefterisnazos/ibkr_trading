@@ -7,8 +7,6 @@ from backtester import Backtester
 import datetime as dt
 
 if __name__ == "__main__":
-    # 1) Initialize IB environment
-    app = BacktesterApp(host='127.0.0.1', port=7497, clientId=26)
 
     # 2) Define ticker universe
     tickers = ["TSLA" ]
@@ -23,7 +21,6 @@ if __name__ == "__main__":
     # 5) Instantiate the backtester with date range
     backtester = Backtester(
         strategy=strategy,
-        app=app,
         tickers=tickers
     )
 

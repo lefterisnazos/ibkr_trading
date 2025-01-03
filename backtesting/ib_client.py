@@ -86,4 +86,5 @@ class IBClient:
 
         df.set_index('Date', inplace=True)
         df.sort_index(inplace=True)
+        df.index = pd.DatetimeIndex(df.index)
         return df

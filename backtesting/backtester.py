@@ -12,9 +12,8 @@ from benchmarks.benchmarks import (
 )
 
 class Backtester:
-    def __init__(self, strategy, app, tickers):
+    def __init__(self, strategy, tickers):
         self.strategy = strategy
-        self.app = app
         self.tickers = tickers
 
         # We'll store the daily_data fetched by the strategy
@@ -28,10 +27,10 @@ class Backtester:
 
     def run(self):
         # 1) Let the strategy prepare daily data
-        self.daily_data = self.strategy.prepare_data(self.app, self.tickers)
+        self.strategy.prepare_data(self.tickers)
 
         # 2) Run the strategy
-        self.final_results = self.strategy.run_strategy(self.app, self.daily_data)
+        self.final_results = self.strategy.run_strategy()
 
         # 3) Convert the strategy’s trade log to a DataFrame
         self.trades_df = self._convert_trades_to_df(self.strategy.trades)
