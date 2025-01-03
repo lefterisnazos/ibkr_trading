@@ -13,6 +13,8 @@ from benchmarks.benchmarks import (
 
 class Backtester:
     def __init__(self, strategy, tickers):
+        self.trades = {}
+        self.pnl= {}
         self.strategy = strategy
         self.tickers = tickers
 
@@ -20,6 +22,8 @@ class Backtester:
         self.daily_data = None
 
         # final_results => {date: {ticker: float_pnl}}
+        self.pnl = {}
+        self.trades = {}
         self.final_results = {}
 
         # For logging all trades in a single DataFrame
@@ -27,10 +31,10 @@ class Backtester:
 
     def run(self):
         # 1) Let the strategy prepare daily data
-        self.strategy.prepare_data(self.tickers)
+        self.daily_data = self.strategy.prepare_data(self.tickers)
 
         # 2) Run the strategy
-        self.final_results = self.strategy.run_strategy()
+        self.final_results, self.trades, self.pnl = self.strategy.run_strategy()
 
         # 3) Convert the strategy’s trade log to a DataFrame        self.trades_df = self._convert_trades_to_df(self.strategy.trades)
 
@@ -51,24 +55,30 @@ class Backtester:
             })
         return pd.DataFrame(rows)
 
+    def trades_to_dataframe(self, trades_list):
+        """
+        Convert a list of Trade objects into a sorted DataFrame
+        with columns [timestamp, side, price, volume, realized_pnl, comment].
+        """
+        rows = []
+        for tr in trades_list:
+            rows.append({"timestamp": tr.timestamp, "side": tr.side, "price": tr.price, "volume": tr.volume, "realized_pnl": tr.realized_pnl, "comment": tr.comment})
+        df = pd.DataFrame(rows)
+        # Sort by timestamp for chronological order
+        df.sort_values("timestamp", inplace=True)
+        df.reset_index(drop=True, inplace=True)
+        return df
+
     def evaluate(self):
         """
-        Evaluate results using your custom metrics.
+        Evaluate using the provided benchmark classes.
         """
-        absolute_ret = AbsoluteReturnEvaluation().compute(self.final_results)
-        win_rate = WinRateEvaluation().compute(self.final_results)
-        mean_win = MeanReturnWinner().compute(self.final_results)
-        mean_loss = MeanReturnLoser().compute(self.final_results)
+        # The strategy might store trades in self.strategy.trades
+        trades_dict = self.strategy.trades  # {ticker: [Trade, ...]}
+        daily_data = self.strategy.daily_data
+        positions_dict = self.strategy.position  # {ticker: Position or None}
 
-        print("**********Strategy Performance Statistics**********")
-        print(f"Total cumulative return: {round(absolute_ret, 4)}")
-        print(f"Total win rate         : {round(win_rate, 2)}%")
-        print(f"Mean return (winners)  : {round(mean_win, 4)}")
-        print(f"Mean return (losers)   : {round(mean_loss, 4)}")
-
-        return {
-            "absolute_return": absolute_ret,
-            "win_rate": win_rate,
-            "mean_win": mean_win,
-            "mean_loss": mean_loss
-        }
+        for bench in self.benchmarks:
+            metrics = bench.compute(trades_dict, daily_data, positions_dict)
+            print(f"** {bench.__class__.__name__} Results **")
+            print(metrics)

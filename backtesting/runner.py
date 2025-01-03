@@ -9,7 +9,7 @@ import datetime as dt
 if __name__ == "__main__":
 
     # 2) Define ticker universe
-    tickers = ["TSLA", 'GLD', 'JAZZ', 'GOOG' , 'AMD']
+    tickers = ["TSLA", 'JAZZ']
 
     # 3) Start & end date for backtest
     start_date = dt.datetime(2024, 1, 1)
