@@ -9,11 +9,11 @@ import datetime as dt
 if __name__ == "__main__":
 
     # 2) Define ticker universe
-    tickers = ["TSLA" ]
+    tickers = ["TSLA", 'GLD', 'JAZZ', 'GOOG' , 'AMD']
 
     # 3) Start & end date for backtest
     start_date = dt.datetime(2024, 1, 1)
-    end_date = dt.datetime(2024, 2, 1)
+    end_date = dt.datetime(2024, 1, 15)
 
     # 4) Instantiate the strategy
     strategy = LinRegSigmaStrategy(start_date, end_date)

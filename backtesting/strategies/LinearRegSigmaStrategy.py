@@ -120,12 +120,14 @@ class LinRegSigmaStrategy(BaseStrategy):
                     continue
 
                 # 3) Run your intraday simulation
-                final_pnl = self.simulate_intraday(ticker, simulation_date.date(), intraday_df, daily_row, regressions_results=regressions_results)
+                final_pnl = self.simulate_intraday(ticker, simulation_date.date(), intraday_df, regressions_results=regressions_results)
 
                 # Store result
                 self.results[simulation_date][ticker] = final_pnl
 
-            return self.results
+        self.finalize_positions()
+
+        return self.results
 
 
     def _compute_linregs_for_ticker(self, ticker: str, period_df: pd.DataFrame, simulation_date):
@@ -229,14 +231,13 @@ class LinRegSigmaStrategy(BaseStrategy):
                 if self.position[ticker].side == "B":
 
                     # Take-profit if price >= lr_med
-                    if lr_med is not None and price >= lr_med:
+                    if price >= lr_med:
                         trade = Trade(contract=ticker, price=virtual_sell_price, volume=self.position[ticker].volume, side="S", timestamp=date, comment="Close long: TP")
                         self.position[ticker].reduce(trade)
                         self.trades[ticker].append(trade)
                         print(trade)
 
                         final_return = (virtual_sell_price / self.position[ticker].avg_price) - 1
-                        self.position[ticker] = None
                         break
 
                     # Stop-loss if price <= lr_med - 3.5*sigma_med
@@ -247,7 +248,6 @@ class LinRegSigmaStrategy(BaseStrategy):
                         print(trade)
 
                         final_return = (virtual_sell_price / self.position[ticker].avg_price) - 1
-                        self.position[ticker] = None
                         break
                     else:
                         # floating PnL
@@ -262,7 +262,6 @@ class LinRegSigmaStrategy(BaseStrategy):
                         print(trade)
 
                         final_return = 1 - (virtual_buy_price / self.position[ticker].avg_price)
-                        self.position[ticker] = None
                         break
 
                     # Stop-loss => price >= lr_med + 3.5*sigma_med
@@ -273,10 +272,30 @@ class LinRegSigmaStrategy(BaseStrategy):
                         print(trade)
 
                         final_return = 1 - (virtual_buy_price / self.position[ticker].avg_price)
-                        self.position[ticker] = None
                         break
                     else:
                         # floating
                         final_return = 1 - (price / self.position[ticker].avg_price)
 
         return final_return
+
+    def finalize_positions(self):
+        """
+        Closes all remaining open positions at final_date using last known price.
+        """
+
+        final_price_dict = {}
+        for ticker in self.daily_data:
+            if not self.daily_data[ticker].empty:
+                last_close = self.daily_data[ticker].iloc[-1]["Close"]
+                last_date = self.daily_data[ticker].index[-1]
+                final_price_dict[ticker] = last_close
+
+        for ticker, pos in self.position.items():
+            if pos is not None and pos.volume > 0:
+                side_to_close = "S" if pos.side == "B" else "B"
+                close_price = final_price_dict.get(ticker, pos.avg_price)
+                trade = Trade(contract=ticker, price=close_price, volume=pos.volume, side=side_to_close, timestamp=last_date, comment="Final close at end of simulation")
+                pos.reduce(trade) # updates trade.realized_pnl
+                print(trade)
+                self.trades[ticker].append(trade)

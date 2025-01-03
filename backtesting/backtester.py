@@ -32,8 +32,7 @@ class Backtester:
         # 2) Run the strategy
         self.final_results = self.strategy.run_strategy()
 
-        # 3) Convert the strategy’s trade log to a DataFrame
-        self.trades_df = self._convert_trades_to_df(self.strategy.trades)
+        # 3) Convert the strategy’s trade log to a DataFrame        self.trades_df = self._convert_trades_to_df(self.strategy.trades)
 
     def _convert_trades_to_df(self, trades_list):
         """
