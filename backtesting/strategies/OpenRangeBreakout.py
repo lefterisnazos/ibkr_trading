@@ -1,10 +1,7 @@
-import time
-import pandas as pd
-from copy import deepcopy
-from backtesting.backtester_app import *
+from not_used.backtester_app import *
 from backtesting.strategies.base import *
-from typing import Dict, List, Optional
-from backtesting.pos_order_trade import Order, Trade, Position
+from typing import Dict, List
+from backtesting.pos_order_trade import Trade, Position
 import datetime as dt
 
 # We'll assume these come from your existing modules
