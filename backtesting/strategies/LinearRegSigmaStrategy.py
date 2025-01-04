@@ -227,9 +227,6 @@ class LinRegSigmaStrategy(BaseStrategy):
                         self.reduce_position(trade, ticker)
                         break
 
-                    else:
-                        pass
-
                 else:  # short side
                     # TP => price <= lr_med
                     if price <= lr_med:
@@ -242,9 +239,6 @@ class LinRegSigmaStrategy(BaseStrategy):
                         trade = Trade(contract=ticker, price=virtual_buy_price, volume=self.position[ticker].volume, side="B", timestamp=timestamp, comment="Close short: SL")
                         self.reduce_position(trade, ticker)
                         break
-
-                    else:
-                        pass
 
     def reduce_position(self, trade: Trade, ticker: str = None):
         self.position[ticker].reduce(trade)
