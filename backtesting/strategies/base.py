@@ -1,6 +1,8 @@
 import pandas as pd
 from typing import Dict, Optional
-
+from backtesting.pos_order_trade import *
+from backtesting.ib_client import IBClient
+from backtesting.pos_order_trade import *
 
 class BaseStrategy:
 
@@ -8,6 +10,21 @@ class BaseStrategy:
 
         self.start_date = None
         self.end_date = None
+        self.ib_client = IBClient(port=7497, client_id=25)
+        self.connect_to_ib()
+
+        self.daily_data: Dict[str, pd.DataFrame] = {}
+        # final_results => {date_str: {ticker: float_pnl}}
+        self.results: Dict[str, Dict[str, float]] = {}
+        self.trades = {}
+        self.position = {}
+        self.pnl = {}
+
+    def connect_to_ib(self):
+        self.ib_client.connect()
+
+    def disconnect_from_ib(self):
+        self.ib_client.disconnect()
 
     def prepare_data(self, tickers) -> Dict[str, pd.DataFrame]:
         """
@@ -31,5 +48,44 @@ class BaseStrategy:
         or does any other intraday stepping to compute final PnL.
         """
         raise NotImplementedError("Please implement simulate_intraday() in your derived strategy.")
+
+    def reduce_position(self, trade: Trade, ticker: str = None):
+        self.position[ticker].reduce(trade)
+        if self.position[ticker].volume == 0:
+            self.position[ticker] = None
+
+        self.pnl[ticker].append(trade)
+        self.trades[ticker].append(trade)
+        print(trade)
+
+    def add_position(self, trade: Trade, ticker: str = None):
+        if self.position[ticker] is None:
+            self.position[ticker] = Position(contract=trade.contract, price=trade.price, volume=trade.volume, side=trade.side, timestamp=trade.timestamp)
+        else:
+            self.position[ticker].add(trade)
+
+        self.trades[ticker].append(trade)
+        print(trade)
+
+    def finalize_positions(self):
+        """
+        Closes all remaining open positions at final_date using last known price.
+        """
+        final_price_dict = {}
+        for ticker in self.daily_data:
+            if not self.daily_data[ticker].empty:
+                last_close = self.daily_data[ticker].iloc[-1]["Close"]
+                last_date = self.daily_data[ticker].index[-1]
+                final_price_dict[ticker] = last_close
+
+        for ticker, pos in self.position.items():
+            if pos is not None and pos.volume > 0:
+                side_to_close = "S" if pos.side == "B" else "B"
+                close_price = final_price_dict.get(ticker, pos.avg_price)
+                trade = Trade(contract=ticker, price=close_price, volume=pos.volume, side=side_to_close, timestamp=pos.last_update,
+                              comment="Final close at end of simulation")
+                pos.reduce(trade)  # updates trade.realized_pnl
+                print(trade)
+                self.trades[ticker].append(trade)
 
 

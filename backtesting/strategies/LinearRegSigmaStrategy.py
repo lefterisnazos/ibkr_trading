@@ -1,10 +1,6 @@
-import time
-import pandas as pd
 import numpy as np
 import datetime as dt
 from typing import Dict, List
-from tqdm import tqdm
-from progress.bar import Bar
 from alive_progress import alive_bar
 
 from sklearn.linear_model import LinearRegression
@@ -25,8 +21,6 @@ class LinRegSigmaStrategy(BaseStrategy):
         super(LinRegSigmaStrategy,self).__init__()
         self.start_date = start_date
         self.end_date = end_date
-        self.ib_client = IBClient(port=7497, client_id=25)
-        self.connect_to_ib()
 
         self.medium_lookback = medium_lookback
         self.long_lookback = long_lookback
@@ -40,24 +34,10 @@ class LinRegSigmaStrategy(BaseStrategy):
         self.long_sigma_band_tp = None
         self.long_sigma_band_sl = None
 
-        self.daily_data: Dict[str, pd.DataFrame] = {}
-
-        # final_results => {date_str: {ticker: float_pnl}}
-        self.results: Dict[str, Dict[str, float]] = {}
-        self.trades = {}
-        self.position = {}
-        self.pnl = {}
-
         # For storing LR info => {ticker: {...}}
         self.last_train_date = None
         self.lr_info = {}
         self.regressions_results = {}
-
-    def connect_to_ib(self):
-        self.ib_client.connect()
-
-    def disconnect_from_ib(self):
-        self.ib_client.disconnect()
 
     def prepare_data(self, tickers: List[str]) -> Dict[str, pd.DataFrame]:
         """
