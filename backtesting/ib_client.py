@@ -4,6 +4,7 @@ import pandas as pd
 from ib_insync import IB, Stock, util
 import math
 from tqdm import tqdm
+from rich.progress import Progress, BarColumn, TimeElapsedColumn, TimeRemainingColumn, TaskID
 
 class IBClient:
     """
@@ -58,7 +59,7 @@ class IBClient:
         contract = self.us_tech_stock(symbol)
         duration_str = IBClient.get_ib_duration_str(start_date, end_date)
         end_date_str = end_date.strftime("%Y%m%d %H:%M:%S") + " US/Eastern"
-
+        #print('Fetching historical data for', symbol, 'from', start_date, 'to', end_date, '...', end='')
         try:
             bars = self.ib.reqHistoricalData(
                 contract=contract,
@@ -109,40 +110,50 @@ class IBClient:
         chunks = []
         current_end = end
 
-        while current_end > start:
-            # subperiod_start is chunk_size_request days before current_end
-            current_start = current_end - pd.Timedelta(days=chunk_size_request)
-            # If subperiod_start < start, clamp it
-            if current_start < start:
-                current_start = start
+        delta_days = (end - start).days
+        estimated_chunks = math.ceil(delta_days / chunk_size_request) if delta_days > 0 else 1
 
-            # Now fetch data from subperiod_start to current_end
-            df_chunk = self.fetch_historical_data(symbol=ticker, start_date=current_start, end_date=current_end, bar_size=bar_size, what_to_show='TRADES', use_rth=True)
-            chunks.append(df_chunk)
+        with Progress("[progress.description]{task.description}", BarColumn(), "[progress.percentage]{task.percentage:>3.0f}%", "•", TimeElapsedColumn(), "•",
+                TimeRemainingColumn(), ) as progress:
 
-            # The earliest bar we got in this chunk
-            earliest_in_chunk = df_chunk.index.min().tz_localize(None)
-            # If we didn't get older data => break
-            if earliest_in_chunk >= current_end:
-                break
+            task_id: TaskID = progress.add_task(f"Fetching intraday for {ticker}", total=estimated_chunks)
 
-            # Move current_end to just before earliest_in_chunk
-            current_end = earliest_in_chunk - pd.Timedelta(minutes=5)
+            while current_end > start:
+                # subperiod_start is chunk_size_request days before current_end
+                current_start = current_end - pd.Timedelta(days=chunk_size_request)
+                # If subperiod_start < start, clamp it
+                if current_start < start:
+                    current_start = start
 
-            # If subperiod_start == start => done
-            if current_start == start:
-                break
+                # Now fetch data from subperiod_start to current_end
+                df_chunk = self.fetch_historical_data(symbol=ticker, start_date=current_start, end_date=current_end, bar_size=bar_size, what_to_show='TRADES', use_rth=True)
+                chunks.append(df_chunk)
 
-        # Concatenate
-        all_intraday = pd.concat(chunks, axis=0)
-        all_intraday.sort_index(inplace=True)
-        all_intraday = all_intraday[~all_intraday.index.duplicated(keep='first')]
+                # The earliest bar we got in this chunk
+                earliest_in_chunk = df_chunk.index.min().tz_localize(None)
+                # If we didn't get older data => break
+                if earliest_in_chunk >= current_end:
+                    break
 
-        start = start.tz_localize(all_intraday.index.tz.key)  # to convert eg to Us/Eastern/ or tz_convert(...)
-        end = end.tz_localize(all_intraday.index.tz.key)
+                # Move current_end to just before earliest_in_chunk
+                current_end = earliest_in_chunk - pd.Timedelta(minutes=5)
+                progress.update(task_id, advance=1)
 
-        # Finally, slice strictly to [start, end]
-        return all_intraday.loc[(all_intraday.index >= start) & (all_intraday.index <= end)]
+
+                # If subperiod_start == start => done
+                if current_start == start:
+                    break
+
+            # Concatenate
+            all_intraday = pd.concat(chunks, axis=0)
+            all_intraday.sort_index(inplace=True)
+            all_intraday = all_intraday[~all_intraday.index.duplicated(keep='first')]
+
+            start = start.tz_localize(all_intraday.index.tz.key)  # to convert eg to Us/Eastern/ or tz_convert(...)
+            end = end.tz_localize(all_intraday.index.tz.key)
+
+            # Finally, slice strictly to [start, end]
+            return all_intraday.loc[(all_intraday.index >= start) & (all_intraday.index <= end)]
 
     @staticmethod
     def get_ib_duration_str(start_date: dt.datetime, end_date: dt.datetime) -> str:

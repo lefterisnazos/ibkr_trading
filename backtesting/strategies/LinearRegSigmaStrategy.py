@@ -110,9 +110,9 @@ class LinRegSigmaStrategy(BaseStrategy):
             simulation_index = df[df.index >= self.start_date].index
 
             print(f'Loading intraday data for {ticker} from {simulation_index[0]} to {simulation_index[-1]}...\n', end='')
-            intraday_all = self.ib_client.fetch_intraday_in_chunks(ticker=ticker, start=simulation_index[0], end=simulation_index[-1] + dt.timedelta(days=1), bar_size="5 mins", chunk_size_request=30)
+            intraday_all = self.ib_client.fetch_intraday_in_chunks(ticker=ticker, start=simulation_index[0], end=simulation_index[-1] + dt.timedelta(days=1), bar_size="30 mins", chunk_size_request=60)
 
-            with alive_bar(len(simulation_index), title=f"SimDates for {ticker}") as bar:
+            with alive_bar(len(simulation_index), title=f"finished simulating for {ticker}") as bar:
                 for simulation_date in simulation_index:
 
                     if simulation_date not in self.results:
@@ -222,8 +222,8 @@ class LinRegSigmaStrategy(BaseStrategy):
             if self.position[ticker] is None:
                 # e.g. go Long if ...
                 if (price < lr_med - self.medium_sigma_band_open * sigma_med) and (price < lr_long - self.long_sigma_band_open* sigma_long):
-                    self.position[ticker] = Position(contract=ticker, price=price, volume=volume, side="B", timestamp=timestamp)
                     open_trade = Trade(contract=ticker, price=virtual_buy_price, volume=volume, side="B", timestamp=timestamp, comment="Open long")
+                    self.position[ticker] = Position(contract=ticker, price=price, volume=volume, side="B", timestamp=timestamp)
                     self.add_position(open_trade, ticker)
 
                 # go Short if ...
@@ -270,11 +270,17 @@ class LinRegSigmaStrategy(BaseStrategy):
         self.position[ticker].reduce(trade)
         if self.position[ticker].volume == 0:
             self.position[ticker] = None
+
         self.pnl[ticker].append(trade)
         self.trades[ticker].append(trade)
         print(trade)
 
     def add_position(self, trade: Trade, ticker: str = None):
+        if self.position[ticker] is None:
+            self.position[ticker] = Position(contract=trade.contract, price=trade.price, volume=trade.volume, side=trade.side, timestamp=trade.timestamp)
+        else:
+            self.position[ticker].add(trade)
+
         self.trades[ticker].append(trade)
         print(trade)
 
@@ -300,10 +306,20 @@ class LinRegSigmaStrategy(BaseStrategy):
 
 
 class LinrRegReversal(LinRegSigmaStrategy):
-    def __init__(self, start_date, end_date):
-        super(LinrRegReversal,self).__init__(start_date, end_date)
+    def __init__(self, start_date, end_date, medium_lookback=10, long_lookback=20):
+        super(LinrRegReversal,self).__init__(start_date, end_date, medium_lookback, long_lookback)
         self.start_date = start_date
         self.end_date = end_date
+        self.medium_lookback = medium_lookback
+        self.long_lookback = long_lookback
+
+        self.medium_sigma_band_open = 2
+        self.medium_sigma_band_tp = None
+        self.medium_sigma_band_sl = None
+
+        self.long_sigma_band_open = 2
+        self.long_sigma_band_tp = None
+        self.long_sigma_band_sl = None
 
     def simulate_intraday(self, ticker: str, date: dt.date, intraday_df: pd.DataFrame, volume=100, **kwargs) -> float:
         regressions_results = kwargs.get("regressions_results", None)
@@ -343,7 +359,6 @@ class LinrRegReversal(LinRegSigmaStrategy):
             # If we do have a position => check exit
             if self.position[ticker] is not None:
                 if self.position[ticker].side == "B":
-
                     # TP => price >= lr_med
                     if price > lr_med + sigma_med * self.medium_sigma_band_open:
                         if price > lr_long + sigma_med * self.long_sigma_band_open:
@@ -353,7 +368,7 @@ class LinrRegReversal(LinRegSigmaStrategy):
                         trade = Trade(contract=ticker, price=virtual_sell_price, volume=volume, side="S", timestamp=timestamp, comment="Short")
                         self.add_position(trade, ticker)
 
-                        break
+                        # break
 
                     # # SL => price <= lr_med - 3.5*sigma_med
                     # elif price <= (lr_med - self.medium_sigma_band_sl * sigma_med):
@@ -367,12 +382,12 @@ class LinrRegReversal(LinRegSigmaStrategy):
                     if price < lr_med - sigma_med * self.medium_sigma_band_open:
                         if price < lr_long - sigma_med * self.long_sigma_band_open:
                             volume = volume * 1.5
-                        trade = Trade(contract=ticker, price=virtual_sell_price, volume=self.position[ticker].volume, side="B", timestamp=timestamp, comment="Close long")
+                        trade = Trade(contract=ticker, price=virtual_sell_price, volume=self.position[ticker].volume, side="B", timestamp=timestamp, comment="Close short")
                         self.reduce_position(trade, ticker)
-                        trade = Trade(contract=ticker, price=virtual_sell_price, volume=volume, side="B", timestamp=timestamp, comment="Short")
+                        trade = Trade(contract=ticker, price=virtual_sell_price, volume=volume, side="B", timestamp=timestamp, comment="Long")
                         self.add_position(trade, ticker)
 
-                        break
+                        # break
 
                     # # SL => price <= lr_med - 3.5*sigma_med
                     # elif price <= (lr_med - self.medium_sigma_band_sl * sigma_med):
