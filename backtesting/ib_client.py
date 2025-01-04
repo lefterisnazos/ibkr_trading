@@ -106,14 +106,9 @@ class IBClient:
         :param chunk_size_request: int, number of days in each chunk (e.g. 60 means ~2 months).
         :return: A DataFrame of intraday bars in [start, end].
         """
-        # We'll gather data in a list of partial DataFrames
         chunks = []
         current_end = end
 
-        # Ensure both 'start' and 'end' are DatetimeIndex-compatible (tz-naive or same tz).
-        # If you keep your data tz-naive, strip tz:
-
-        # We'll iterate backwards from 'end' to 'start'
         while current_end > start:
             # subperiod_start is chunk_size_request days before current_end
             current_start = current_end - pd.Timedelta(days=chunk_size_request)
@@ -123,10 +118,6 @@ class IBClient:
 
             # Now fetch data from subperiod_start to current_end
             df_chunk = self.fetch_historical_data(symbol=ticker, start_date=current_start, end_date=current_end, bar_size=bar_size, what_to_show='TRADES', use_rth=True)
-            # If empty => no more data or IB can't provide older data
-            if df_chunk.empty:
-                break
-
             chunks.append(df_chunk)
 
             # The earliest bar we got in this chunk
@@ -142,17 +133,14 @@ class IBClient:
             if current_start == start:
                 break
 
-        # If no data was fetched
-        if not chunks:
-            return pd.DataFrame()
-
-        # Concatenate all partial DataFrames
+        # Concatenate
         all_intraday = pd.concat(chunks, axis=0)
         all_intraday.sort_index(inplace=True)
         all_intraday = all_intraday[~all_intraday.index.duplicated(keep='first')]
 
         start = start.tz_localize(all_intraday.index.tz.key)  # to convert eg to Us/Eastern/ or tz_convert(...)
         end = end.tz_localize(all_intraday.index.tz.key)
+
         # Finally, slice strictly to [start, end]
         return all_intraday.loc[(all_intraday.index >= start) & (all_intraday.index <= end)]
 
@@ -176,21 +164,3 @@ class IBClient:
             # e.g., "2 Y" if 370 days
             years = math.ceil(delta_days / 365.0)
             return f"{years} Y"
-
-# ib = IBClient()
-# ib.connect()
-# timestamp = pd.Timestamp('2024-01-02 22:05:00')
-# x1 = time.time()
-# intraday_df = ib.fetch_historical_data(symbol='JAZZ', end_date=timestamp, duration_str='25 D', bar_size='5 mins')
-# y1= time.time()
-#
-# x2 = time.time()
-# for _ in range(25):
-#
-#     intraday_df = ib.fetch_historical_data(symbol='JAZZ', end_date=timestamp, duration_str='1 D', bar_size='5 mins')
-# y2 = time.time()
-#
-# diff1 = y1- x1
-# diff2  = y2-x2
-z=2
-

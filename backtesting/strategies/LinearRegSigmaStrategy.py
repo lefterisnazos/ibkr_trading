@@ -224,13 +224,13 @@ class LinRegSigmaStrategy(BaseStrategy):
                 if (price < lr_med - self.medium_sigma_band_open * sigma_med) and (price < lr_long - self.long_sigma_band_open* sigma_long):
                     self.position[ticker] = Position(contract=ticker, price=price, volume=volume, side="B", timestamp=timestamp)
                     open_trade = Trade(contract=ticker, price=virtual_buy_price, volume=volume, side="B", timestamp=timestamp, comment="Open long")
-                    self.open_position(open_trade, ticker)
+                    self.add_position(open_trade, ticker)
 
                 # go Short if ...
                 elif (price > lr_med + sigma_med * self.medium_sigma_band_open) and (price > lr_long + sigma_med * self.long_sigma_band_open):
                     self.position[ticker] = Position(contract=ticker, price=price, volume=volume, side="S", timestamp=timestamp)
                     open_trade = Trade(contract=ticker, price=virtual_sell_price, volume=volume, side="S", timestamp=timestamp, comment="Open short")
-                    self.open_position(open_trade, ticker)
+                    self.add_position(open_trade, ticker)
 
             # If we do have a position => check exit
             if self.position[ticker] is not None:
@@ -274,9 +274,9 @@ class LinRegSigmaStrategy(BaseStrategy):
         self.trades[ticker].append(trade)
         print(trade)
 
-    def open_position(self, open_trade: Trade, ticker: str = None):
-        self.trades[ticker].append(open_trade)
-        print(open_trade)
+    def add_position(self, trade: Trade, ticker: str = None):
+        self.trades[ticker].append(trade)
+        print(trade)
 
     def finalize_positions(self):
         """
@@ -299,14 +299,11 @@ class LinRegSigmaStrategy(BaseStrategy):
                 self.trades[ticker].append(trade)
 
 
-
-
 class LinrRegReversal(LinRegSigmaStrategy):
     def __init__(self, start_date, end_date):
         super(LinrRegReversal,self).__init__(start_date, end_date)
         self.start_date = start_date
         self.end_date = end_date
-
 
     def simulate_intraday(self, ticker: str, date: dt.date, intraday_df: pd.DataFrame, volume=100, **kwargs) -> float:
         regressions_results = kwargs.get("regressions_results", None)
@@ -332,51 +329,54 @@ class LinrRegReversal(LinRegSigmaStrategy):
 
                     self.position[ticker] = Position(contract=ticker, price=price, volume=volume, side="B", timestamp=timestamp)
                     open_trade = Trade(contract=ticker, price=virtual_buy_price, volume=volume, side="B", timestamp=timestamp, comment="Open long")
-                    self.open_position(open_trade, ticker)
+                    self.add_position(open_trade, ticker)
 
                 # go Short if ...
-                elif price > lr_med + 1 * self.medium_sigma_band_open:
-                    if price > lr_long + 1 * self.long_sigma_band_open:
+                elif price > lr_med + sigma_med * self.medium_sigma_band_open:
+                    if price > lr_long + sigma_med * self.long_sigma_band_open:
                         volume = volume* 1.5
 
                     self.position[ticker] = Position(contract=ticker, price=price, volume=volume*1.5, side="S", timestamp=timestamp)
                     open_trade = Trade(contract=ticker, price=virtual_sell_price, volume=volume*1.5, side="S", timestamp=timestamp, comment="Open short")
-                    self.open_position(open_trade, ticker)
+                    self.add_position(open_trade, ticker)
 
             # If we do have a position => check exit
             if self.position[ticker] is not None:
                 if self.position[ticker].side == "B":
+
                     # TP => price >= lr_med
-                    if price >= lr_med:
-                        trade = Trade(contract=ticker, price=virtual_sell_price, volume=self.position[ticker].volume, side="S", timestamp=timestamp,
-                                      comment="Close long: TP")
+                    if price > lr_med + sigma_med * self.medium_sigma_band_open:
+                        if price > lr_long + sigma_med * self.long_sigma_band_open:
+                            volume = volume* 1.5
+                        trade = Trade(contract=ticker, price=virtual_sell_price, volume=self.position[ticker].volume, side="S", timestamp=timestamp,comment="Close long")
                         self.reduce_position(trade, ticker)
+                        trade = Trade(contract=ticker, price=virtual_sell_price, volume=volume, side="S", timestamp=timestamp, comment="Short")
+                        self.add_position(trade, ticker)
+
                         break
 
-                    # SL => price <= lr_med - 3.5*sigma_med
-                    elif price <= (lr_med - self.medium_sigma_band_sl * sigma_med):
-                        trade = Trade(contract=ticker, price=virtual_sell_price, volume=self.position[ticker].volume, side="S", timestamp=timestamp,
-                                      comment="Close long: SL")
-                        self.reduce_position(trade, ticker)
-                        break
-
-                    else:
-                        pass
+                    # # SL => price <= lr_med - 3.5*sigma_med
+                    # elif price <= (lr_med - self.medium_sigma_band_sl * sigma_med):
+                    #     trade = Trade(contract=ticker, price=virtual_sell_price, volume=self.position[ticker].volume, side="S", timestamp=timestamp,
+                    #                   comment="Close long: SL")
+                    #     self.reduce_position(trade, ticker)
+                    #     break
 
                 else:  # short side
                     # TP => price <= lr_med
-                    if price <= lr_med:
-                        trade = Trade(contract=ticker, price=virtual_buy_price, volume=self.position[ticker].volume, side="B", timestamp=timestamp,
-                                      comment="Close short: TP")
+                    if price < lr_med - sigma_med * self.medium_sigma_band_open:
+                        if price < lr_long - sigma_med * self.long_sigma_band_open:
+                            volume = volume * 1.5
+                        trade = Trade(contract=ticker, price=virtual_sell_price, volume=self.position[ticker].volume, side="B", timestamp=timestamp, comment="Close long")
                         self.reduce_position(trade, ticker)
+                        trade = Trade(contract=ticker, price=virtual_sell_price, volume=volume, side="B", timestamp=timestamp, comment="Short")
+                        self.add_position(trade, ticker)
+
                         break
 
-                    # SL => price >= lr_med + 3.5*sigma_med
-                    elif price >= (lr_med + self.medium_sigma_band_sl * sigma_med):
-                        trade = Trade(contract=ticker, price=virtual_buy_price, volume=self.position[ticker].volume, side="B", timestamp=timestamp,
-                                      comment="Close short: SL")
-                        self.reduce_position(trade, ticker)
-                        break
-
-                    else:
-                        pass
+                    # # SL => price <= lr_med - 3.5*sigma_med
+                    # elif price <= (lr_med - self.medium_sigma_band_sl * sigma_med):
+                    #     trade = Trade(contract=ticker, price=virtual_sell_price, volume=self.position[ticker].volume, side="S", timestamp=timestamp,
+                    #                   comment="Close long: SL")
+                    #     self.reduce_position(trade, ticker)
+                    #     break
