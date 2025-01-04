@@ -2,6 +2,8 @@ import time
 import datetime as dt
 import pandas as pd
 from ib_insync import IB, Stock, util
+import math
+from tqdm import tqdm
 
 class IBClient:
     """
@@ -41,10 +43,11 @@ class IBClient:
         """
         return Stock(symbol, exchange=exchange, currency=currency)
 
-    def fetch_historical_data(self, symbol: str, end_date: dt.datetime, duration_str: str, bar_size: str, what_to_show: str = 'TRADES', use_rth: bool = True) -> pd.DataFrame:
+    def fetch_historical_data(self, symbol: str, start_date: dt.datetime, end_date: dt.datetime, bar_size: str, what_to_show: str = 'TRADES', use_rth: bool = True) -> pd.DataFrame:
         """
         Uses ib_insync to request historical data for `symbol` as a DataFrame.
         :param symbol: Ticker symbol (e.g., 'AAPL').
+        :param start_date: Start datetime (Python `datetime`) for the historical data request.
         :param end_date: End datetime (Python `datetime`) for the historical data request.
         :param duration_str: IB-compatible duration string, e.g. "1 Y", "1 D", etc.
         :param bar_size: IB-compatible bar size, e.g. "1 day", "5 mins".
@@ -53,6 +56,7 @@ class IBClient:
         :return: DataFrame with columns: [Date, Open, High, Low, Close, Volume, ...]
         """
         contract = self.us_tech_stock(symbol)
+        duration_str = IBClient.get_ib_duration_str(start_date, end_date)
         end_date_str = end_date.strftime("%Y%m%d %H:%M:%S") + " US/Eastern"
 
         try:
@@ -89,56 +93,89 @@ class IBClient:
         df.index = pd.DatetimeIndex(df.index)
         return df
 
-    def fetch_intraday_in_chunks(self, ticker: str, start: pd.Timestamp, end: pd.Timestamp, bar_size: str = "5 mins", chunk_size_request: str = "2 M") -> pd.DataFrame:
+    def fetch_intraday_in_chunks(self, ticker: str, start: pd.Timestamp, end: pd.Timestamp, bar_size: str = "5 mins", chunk_size_request: int = 60
+            # number of days per chunk
+    ) -> pd.DataFrame:
         """
-        Fetch all intraday data for 'ticker' from 'start' to 'end',
-        in 'chunk_size_request' chunks (e.g. '2 M' => 2 months),
-        and concatenate into a single DataFrame.
+        Fetch intraday data for 'ticker' from 'start' to 'end' in chunks of 'chunk_size_request' days.
 
-        :param ticker: The symbol (e.g. "AAPL").
-        :param start:  A pandas Timestamp or datetime representing the earliest date/time.
-        :param end:    A pandas Timestamp or datetime representing the latest date/time.
-        :param bar_size: e.g. "5 mins"
-        :param chunk_size_request: e.g. "2 M", "1 D", "3 W". Any IB-compatible duration string.
+        :param ticker: Ticker symbol, e.g. 'AAPL'.
+        :param start: Earliest datetime (pd.Timestamp).
+        :param end: Latest datetime (pd.Timestamp).
+        :param bar_size: e.g. '5 mins'.
+        :param chunk_size_request: int, number of days in each chunk (e.g. 60 means ~2 months).
         :return: A DataFrame of intraday bars in [start, end].
         """
-
+        # We'll gather data in a list of partial DataFrames
         chunks = []
         current_end = end
 
-        # We'll iterate backward from 'end' until we reach 'start'
+        # Ensure both 'start' and 'end' are DatetimeIndex-compatible (tz-naive or same tz).
+        # If you keep your data tz-naive, strip tz:
+
+        # We'll iterate backwards from 'end' to 'start'
         while current_end > start:
+            # subperiod_start is chunk_size_request days before current_end
+            current_start = current_end - pd.Timedelta(days=chunk_size_request)
+            # If subperiod_start < start, clamp it
+            if current_start < start:
+                current_start = start
 
-            df_chunk = self.fetch_historical_data(symbol=ticker, end_date=current_end,  duration_str=chunk_size_request, bar_size=bar_size, what_to_show='TRADES', use_rth=True)
-
+            # Now fetch data from subperiod_start to current_end
+            df_chunk = self.fetch_historical_data(symbol=ticker, start_date=current_start, end_date=current_end, bar_size=bar_size, what_to_show='TRADES', use_rth=True)
+            # If empty => no more data or IB can't provide older data
             if df_chunk.empty:
                 break
 
             chunks.append(df_chunk)
 
-            # Identify the earliest time in this chunk
+            # The earliest bar we got in this chunk
             earliest_in_chunk = df_chunk.index.min().tz_localize(None)
+            # If we didn't get older data => break
             if earliest_in_chunk >= current_end:
-                # We didn't get older data => nothing left
                 break
 
             # Move current_end to just before earliest_in_chunk
-            # so next request fetches older data
-            # e.g. subtract 1 bar or a few minutes buffer
             current_end = earliest_in_chunk - pd.Timedelta(minutes=5)
 
+            # If subperiod_start == start => done
+            if current_start == start:
+                break
+
+        # If no data was fetched
         if not chunks:
             return pd.DataFrame()
 
-        # Concatenate
-        all_intraday = pd.concat(chunks)
+        # Concatenate all partial DataFrames
+        all_intraday = pd.concat(chunks, axis=0)
         all_intraday.sort_index(inplace=True)
         all_intraday = all_intraday[~all_intraday.index.duplicated(keep='first')]
 
-        start = start.tz_localize('US/Eastern')  # or .tz_convert(...)
-        end = end.tz_localize('US/Eastern')
+        start = start.tz_localize(all_intraday.index.tz.key)  # to convert eg to Us/Eastern/ or tz_convert(...)
+        end = end.tz_localize(all_intraday.index.tz.key)
+        # Finally, slice strictly to [start, end]
+        return all_intraday.loc[(all_intraday.index >= start) & (all_intraday.index <= end)]
 
-        return all_intraday[(all_intraday.index >= start) & (all_intraday.index <= end)]
+    @staticmethod
+    def get_ib_duration_str(start_date: dt.datetime, end_date: dt.datetime) -> str:
+        """
+        Returns an IB-compatible duration string based on the time span
+        between start_date and end_date.
+
+        - If <= 365 days, returns "XXX D"
+        - If > 365 days, returns "Y Y" (years),
+          where Y is the ceiling of the number of 365-day chunks.
+        """
+        delta_days = (end_date - start_date).days
+
+        # IB error 321: "Historical data requests for durations longer than 365 days must be made in years."
+        if delta_days <= 365:
+            # e.g., "300 D"
+            return f"{delta_days} D"
+        else:
+            # e.g., "2 Y" if 370 days
+            years = math.ceil(delta_days / 365.0)
+            return f"{years} Y"
 
 # ib = IBClient()
 # ib.connect()
