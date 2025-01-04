@@ -113,47 +113,45 @@ class IBClient:
         delta_days = (end - start).days
         estimated_chunks = math.ceil(delta_days / chunk_size_request) if delta_days > 0 else 1
 
-        with Progress("[progress.description]{task.description}", BarColumn(), "[progress.percentage]{task.percentage:>3.0f}%", "•", TimeElapsedColumn(), "•",
-                TimeRemainingColumn(), ) as progress:
+        pbar = tqdm(total=estimated_chunks, desc=f"Intraday for {ticker}", unit="chunk", leave=True)  # 'leave=True' means the bar stays after completion)
+        while current_end > start:
+            # subperiod_start is chunk_size_request days before current_end
+            current_start = current_end - pd.Timedelta(days=chunk_size_request)
+            # If subperiod_start < start, clamp it
+            if current_start < start:
+                current_start = start
 
-            task_id: TaskID = progress.add_task(f"Fetching intraday for {ticker}", total=estimated_chunks)
+            # Now fetch data from subperiod_start to current_end
+            df_chunk = self.fetch_historical_data(symbol=ticker, start_date=current_start, end_date=current_end, bar_size=bar_size, what_to_show='TRADES', use_rth=True)
+            chunks.append(df_chunk)
 
-            while current_end > start:
-                # subperiod_start is chunk_size_request days before current_end
-                current_start = current_end - pd.Timedelta(days=chunk_size_request)
-                # If subperiod_start < start, clamp it
-                if current_start < start:
-                    current_start = start
+            # The earliest bar we got in this chunk
+            earliest_in_chunk = df_chunk.index.min().tz_localize(None)
+            # If we didn't get older data => break
+            if earliest_in_chunk >= current_end:
+                break
 
-                # Now fetch data from subperiod_start to current_end
-                df_chunk = self.fetch_historical_data(symbol=ticker, start_date=current_start, end_date=current_end, bar_size=bar_size, what_to_show='TRADES', use_rth=True)
-                chunks.append(df_chunk)
-
-                # The earliest bar we got in this chunk
-                earliest_in_chunk = df_chunk.index.min().tz_localize(None)
-                # If we didn't get older data => break
-                if earliest_in_chunk >= current_end:
-                    break
-
-                # Move current_end to just before earliest_in_chunk
-                current_end = earliest_in_chunk - pd.Timedelta(minutes=5)
-                progress.update(task_id, advance=1)
+            # Move current_end to just before earliest_in_chunk
+            current_end = earliest_in_chunk - pd.Timedelta(minutes=5)
+            pbar.update(1)
 
 
-                # If subperiod_start == start => done
-                if current_start == start:
-                    break
+            # If subperiod_start == start => done
+            if current_start == start:
+                break
+
+        pbar.close()
 
             # Concatenate
-            all_intraday = pd.concat(chunks, axis=0)
-            all_intraday.sort_index(inplace=True)
-            all_intraday = all_intraday[~all_intraday.index.duplicated(keep='first')]
+        all_intraday = pd.concat(chunks, axis=0)
+        all_intraday.sort_index(inplace=True)
+        all_intraday = all_intraday[~all_intraday.index.duplicated(keep='first')]
 
-            start = start.tz_localize(all_intraday.index.tz.key)  # to convert eg to Us/Eastern/ or tz_convert(...)
-            end = end.tz_localize(all_intraday.index.tz.key)
+        start = start.tz_localize(all_intraday.index.tz.key)  # to convert eg to Us/Eastern/ or tz_convert(...)
+        end = end.tz_localize(all_intraday.index.tz.key)
 
-            # Finally, slice strictly to [start, end]
-            return all_intraday.loc[(all_intraday.index >= start) & (all_intraday.index <= end)]
+        # Finally, slice strictly to [start, end]
+        return all_intraday.loc[(all_intraday.index >= start) & (all_intraday.index <= end)]
 
     @staticmethod
     def get_ib_duration_str(start_date: dt.datetime, end_date: dt.datetime) -> str:
