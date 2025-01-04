@@ -3,10 +3,7 @@
 from backtesting.strategies.LinearRegSigmaStrategy import LinRegSigmaStrategy, LinrRegReversal
 from backtester import Backtester
 import datetime as dt
-import pandas as pd
-
-pd.set_option('display.precision', 4)             # display up to 2 decimals
-pd.set_option('display.float_format', '{:.4f}'.format)
+import builtins
 
 if __name__ == "__main__":
 

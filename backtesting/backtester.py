@@ -5,10 +5,6 @@ from typing import Dict, List
 from pos_order_trade import *
 import datetime as dt
 from backtesting.benchmarks import *
-
-pd.set_option('display.precision', 4)             # display up to 2 decimals
-pd.set_option('display.float_format', '{:.4f}'.format)
-
 class Backtester:
     def __init__(self, strategy, tickers):
         self.trades = {}
