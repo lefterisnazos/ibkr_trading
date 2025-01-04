@@ -7,8 +7,6 @@ import datetime as dt
 from backtesting.benchmarks import *
 class Backtester:
     def __init__(self, strategy, tickers):
-        self.trades = {}
-        self.pnl= {}
         self.strategy = strategy
         self.tickers = tickers
 
@@ -18,7 +16,6 @@ class Backtester:
         # final_results => {date: {ticker: float_pnl}}
         self.pnl = {}
         self.trades = {}
-        self.final_results = {}
 
         # For logging all trades in a single DataFrame
         self.trades_df = pd.DataFrame()
@@ -44,15 +41,15 @@ class Backtester:
         for ticker, trades_list in trades.items():
             rows = []
             for trade in trades_list:
-                rows.append({"timestamp": pd.to_datetime(trade.timestamp),  # must appear if we want to set as index
-                    "contract": trade.contract, "side": trade.side, "volume": trade.volume, "price": trade.price, "realized_pnl": trade.realized_pnl,
-                    # e.g. trade.realizedPnL
-                    "realized_return": getattr(trade, "realized_return", None),  # if you store it
+                rows.append({"timestamp": pd.to_datetime(trade.timestamp),
+                    "contract": trade.contract, "side": trade.side, "volume": trade.volume, "price": trade.price,
+                    "realized_pnl": trade.realized_pnl,
+                    "realized_return": trade.realized_return,
                     "comment": trade.comment})
             if rows:
                 df = pd.DataFrame(rows)
                 df.set_index("timestamp", inplace=True)
-                df.index = pd.DatetimeIndex(df.index)# set timestamp as the index
+                df.index = pd.DatetimeIndex(df.index)
                 trades_dfs[ticker] = df
             else:
                 trades_dfs[ticker] = pd.DataFrame()
