@@ -50,6 +50,7 @@ class Backtester:
                 df = pd.DataFrame(rows)
                 df.set_index("timestamp", inplace=True)
                 df.index = pd.DatetimeIndex(df.index)
+                df = (df.round(4))
                 trades_dfs[ticker] = df
             else:
                 trades_dfs[ticker] = pd.DataFrame()

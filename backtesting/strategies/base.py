@@ -1,24 +1,24 @@
 import pandas as pd
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from backtesting.pos_order_trade import *
 from backtesting.ib_client import IBClient
 from backtesting.pos_order_trade import *
 
 class BaseStrategy:
 
-    def __init__(self):
+    def __init__(self, client_id=25):
 
         self.start_date = None
         self.end_date = None
-        self.ib_client = IBClient(port=7497, client_id=25)
+        self.ib_client = IBClient(port=7497, client_id=client_id)
         self.connect_to_ib()
 
         self.daily_data: Dict[str, pd.DataFrame] = {}
         # final_results => {date_str: {ticker: float_pnl}}
         self.results: Dict[str, Dict[str, float]] = {}
-        self.trades = {}
-        self.position = {}
-        self.pnl = {}
+        self.trades: Dict[str, List[Trade]]= {}               # Dict with keys: tickers, and values: List of Trade objects
+        self.pnl: Dict[str, List[Trade]]= {}                  # same as self.trade{}, but we are just adding trades with a pnl (not opening trades)
+        self.position: Dict[str, Position] = {}               # Dict with keys: tickers, and values: Position Objects
 
     def connect_to_ib(self):
         self.ib_client.connect()
@@ -72,6 +72,7 @@ class BaseStrategy:
         Closes all remaining open positions at final_date using last known price.
         """
         final_price_dict = {}
+        last_date = None
         for ticker in self.daily_data:
             if not self.daily_data[ticker].empty:
                 last_close = self.daily_data[ticker].iloc[-1]["Close"]
@@ -82,7 +83,8 @@ class BaseStrategy:
             if pos is not None and pos.volume > 0:
                 side_to_close = "S" if pos.side == "B" else "B"
                 close_price = final_price_dict.get(ticker, pos.avg_price)
-                trade = Trade(contract=ticker, price=close_price, volume=pos.volume, side=side_to_close, timestamp=pos.last_update,
+                trade = Trade(contract=ticker, price=close_price, volume=pos.volume, side=side_to_close,
+                              timestamp=pos.last_update.replace(year=last_date.year, month=last_date.month, day=last_date.day, hour=16, minute=30, second=00),
                               comment="Final close at end of simulation")
                 pos.reduce(trade)  # updates trade.realized_pnl
                 print(trade)
