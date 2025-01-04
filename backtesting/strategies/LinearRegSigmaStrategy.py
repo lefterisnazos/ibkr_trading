@@ -135,8 +135,8 @@ class LinRegSigmaStrategy(BaseStrategy):
                     regressions_results = {'lr_med': lr_med, 'lr_long': lr_long, 'sigma_med': sigma_med, 'sigma_long': sigma_long}
                     self.regressions_results[simulation_date] = regressions_results
 
-                    day_start = simulation_date.tz_localize('US/Eastern')
-                    day_end  = (simulation_date + pd.Timedelta(days=1)).tz_localize('US/Eastern')
+                    day_start = simulation_date.tz_localize(intraday_all.index.tz.key)  # to convert eg to Us/Eastern/ or tz_convert(...)
+                    day_end = (simulation_date + pd.Timedelta(days=1)).tz_localize(intraday_all.index.tz.key)
                     intraday_slice = intraday_all.loc[(intraday_all.index >= day_start) &
                                                       (intraday_all.index < day_end)]
 
