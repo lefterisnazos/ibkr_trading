@@ -299,7 +299,7 @@ class LinRegSigmaStrategy(BaseStrategy):
             if pos is not None and pos.volume > 0:
                 side_to_close = "S" if pos.side == "B" else "B"
                 close_price = final_price_dict.get(ticker, pos.avg_price)
-                trade = Trade(contract=ticker, price=close_price, volume=pos.volume, side=side_to_close, timestamp=last_date, comment="Final close at end of simulation")
+                trade = Trade(contract=ticker, price=close_price, volume=pos.volume, side=side_to_close, timestamp=pos.last_update, comment="Final close at end of simulation")
                 pos.reduce(trade) # updates trade.realized_pnl
                 print(trade)
                 self.trades[ticker].append(trade)

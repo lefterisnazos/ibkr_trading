@@ -3,6 +3,10 @@
 from backtesting.strategies.LinearRegSigmaStrategy import LinRegSigmaStrategy, LinrRegReversal
 from backtester import Backtester
 import datetime as dt
+import pandas as pd
+
+pd.set_option('display.precision', 4)             # display up to 2 decimals
+pd.set_option('display.float_format', '{:.4f}'.format)
 
 if __name__ == "__main__":
 
@@ -10,8 +14,8 @@ if __name__ == "__main__":
     tickers = ['QQQ']
 
     # 3) Start & end date for backtest
-    start_date = dt.datetime(2018, 1, 1)
-    end_date = dt.datetime(2024, 3, 1)
+    start_date = dt.datetime(2024, 1, 1)
+    end_date = dt.datetime(2024, 10, 1)
 
     # 4) Instantiate the strategy
     strategy = LinrRegReversal(start_date, end_date, medium_lookback=22, long_lookback=110)
@@ -25,6 +29,5 @@ if __name__ == "__main__":
     # 6) Run the backtest
     backtester.run()
 
-    x=2
     # 7) Evaluate results
     stats = backtester.evaluate()

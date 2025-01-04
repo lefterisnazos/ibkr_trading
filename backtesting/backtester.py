@@ -2,8 +2,12 @@
 import time
 import pandas as pd
 from typing import Dict, List
+from pos_order_trade import *
 import datetime as dt
 from backtesting.benchmarks import *
+
+pd.set_option('display.precision', 4)             # display up to 2 decimals
+pd.set_option('display.float_format', '{:.4f}'.format)
 
 class Backtester:
     def __init__(self, strategy, tickers):
@@ -22,6 +26,7 @@ class Backtester:
 
         # For logging all trades in a single DataFrame
         self.trades_df = pd.DataFrame()
+        self.pnl_df = pd.DataFrame()
 
     def run(self):
         # 1) Let the strategy prepare daily data
@@ -30,47 +35,40 @@ class Backtester:
         # 2) Run the strategy
         self.trades, self.pnl = self.strategy.run_strategy()
 
-    def _convert_trades_to_df(self, trades_list):
-        """
-        Convert the list of Trade objects to a pandas DataFrame.
-        """
-        rows = []
-        for tr in trades_list:
-            rows.append({
-                "timestamp":   tr.timestamp,
-                "contract":    tr.contract,
-                "side":        tr.side,
-                "price":       tr.price,
-                "volume":      tr.volume,
-                "realizedPnL": tr.realized_pnl,
-                "comment":     tr.comment
-            })
-        return pd.DataFrame(rows)
+        return
 
-    def trades_to_dataframe(self, trades_list):
+    @staticmethod
+    def trades_to_dataframe(trades:  Dict[str, List[Trade]]):
         """
-        Convert a list of Trade objects into a sorted DataFrame
-        with columns [timestamp, side, price, volume, realized_pnl, comment].
+        Convert a list of Trade objects into a Pandas DataFrame,
+        using 'timestamp' as the index.
         """
-        rows = []
-        for tr in trades_list:
-            rows.append({"timestamp": tr.timestamp, "side": tr.side, "price": tr.price, "volume": tr.volume, "realized_pnl": tr.realized_pnl, "comment": tr.comment})
-        df = pd.DataFrame(rows)
-        # Sort by timestamp for chronological order
-        df.sort_values("timestamp", inplace=True)
-        df.reset_index(drop=True, inplace=True)
-        return df
+        trades_dfs = {}
+
+        for ticker, trades_list in trades.items():
+            rows = []
+            for trade in trades_list:
+                rows.append({"timestamp": pd.to_datetime(trade.timestamp),  # must appear if we want to set as index
+                    "contract": trade.contract, "side": trade.side, "volume": trade.volume, "price": trade.price, "realized_pnl": trade.realized_pnl,
+                    # e.g. trade.realizedPnL
+                    "realized_return": getattr(trade, "realized_return", None),  # if you store it
+                    "comment": trade.comment})
+            if rows:
+                df = pd.DataFrame(rows)
+                df.set_index("timestamp", inplace=True)
+                df.index = pd.DatetimeIndex(df.index)# set timestamp as the index
+                trades_dfs[ticker] = df
+            else:
+                trades_dfs[ticker] = pd.DataFrame()
+
+        return trades_dfs
 
     def evaluate(self):
         """
         Evaluate using the provided benchmark classes.
         """
         # The strategy might store trades in self.strategy.trades
-        trades_dict = self.strategy.trades  # {ticker: [Trade, ...]}
-        daily_data = self.strategy.daily_data
-        positions_dict = self.strategy.position  # {ticker: Position or None}
+        self.trades_df = self.trades_to_dataframe(self.trades)
+        self.pnl_df = self.trades_to_dataframe(self.pnl)
 
-        for bench in self.benchmarks:
-            metrics = bench.compute(trades_dict, daily_data, positions_dict)
-            print(f"** {bench.__class__.__name__} Results **")
-            print(metrics)
+        return [self.trades_df, self.pnl_df]
