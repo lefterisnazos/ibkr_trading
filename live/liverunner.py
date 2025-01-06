@@ -8,6 +8,7 @@ class LiveRunner:
     def __init__(self, strategy):
         self.strategy = strategy
         self.ib_client = strategy.ib_client
+        self.ib_client.account = "DU8057891"
         self.ib = self.ib_client.ib  # convenience
 
         self.tickers = ["AAPL", "MSFT"]  # or pass them in
@@ -20,7 +21,7 @@ class LiveRunner:
         schedule.every().monday.at("09:25").do(self.on_market_open)
         schedule.every().tuesday.at("09:25").do(self.on_market_open)
 
-        schedule.every().day.at("15:55").do(self.on_market_close)
+        schedule.every().day.at("15:50").do(self.on_market_close)
 
         while True:
             schedule.run_pending()
@@ -52,7 +53,7 @@ class LiveRunner:
         bar_ts = latest_bar.time  # datetime
 
         # Call our strategy’s on_new_bar method
-        self.strategy.on_new_bar(ticker, open_px, bar_ts, volume=100)
+        self.strategy.on_new_bar(ticker, open_px, bar_ts, volume=1)
 
     def on_market_close(self):
         print("[LiveRunner] Market close logic. Flatten positions if needed.")

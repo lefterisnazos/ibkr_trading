@@ -7,7 +7,6 @@ from typing import Dict, List, Tuple, Optional
 from tqdm import tqdm
 
 from ib_insync import MarketOrder, LimitOrder, StopOrder
-from pos_order_trade_live import Position, Trade
 
 # bars = ib.reqRealTimeBars(contract, whatToShow='TRADES', useRTH=True, barSize=5)
 # # bars is an ib_insync “RealTimeBarList” which updates automatically
@@ -26,7 +25,8 @@ class IBClientLive:
       - Receives tradeUpdate events
       - Provides methods to place orders & update positions
     """
-    def __init__(self, host='127.0.0.1', port=7497, client_id=25):
+    def __init__(self, account, host='127.0.0.1', port=7497, client_id=25):
+        self.account = account
         self.host = host
         self.port = port
         self.client_id = client_id
@@ -35,9 +35,10 @@ class IBClientLive:
         self.ib = IB()
 
         # Book-keeping
-        self.position: Dict[str, Position] = {}
-        self.trades: Dict[str, List[Trade]] = {}
-        self.pnl: Dict[str, List[Trade]] = {}
+        self.positions: Dict[str, Dict[str, float]] = {}
+
+        self.trades: Dict[str, List[IBTrade]] = {}
+        self.pnl: Dict[str, List[IBTrade]] = {}
 
     def connect(self):
         """
@@ -85,6 +86,21 @@ class IBClientLive:
         print(f"Placed {side} order for {quantity} shares of {contract.symbol} at {limit_price} (order: {order})")
         return trade
 
+    def get_orders(self, all_clients= False):
+
+
+    def get_positions(self, account, contract, pos, avgCost):
+        """
+        """
+
+        positions = self.ib.positions()
+        self.positions = {}
+        for account, contract, pos, avgCost in positions:
+            self.positions[contract.symbol] = {'position': pos, 'avgCost': avgCost, 'contract': contract, 'account': account}
+
+        print(f"[on_position_update] Updated position: {contract.symbol} -> pos={pos}, avgCost={avgCost}")
+
+
     def on_trade_update(self, trade: IBTrade):
         """
         Called automatically whenever a trade is updated with partial fill, fill, etc.
@@ -112,52 +128,7 @@ class IBClientLive:
                 self.trades[ticker] = []
             if ticker not in self.pnl:
                 self.pnl[ticker] = []
-            if ticker not in self.position:
-                self.position[ticker] = None
 
-            # Add or reduce
-            if local_side == "B":
-                # If we have no position or we are already long => add
-                if self.position[ticker] is None or self.position[ticker].side == "B":
-                    self.add_position(local_trade, ticker)
-                else:
-                    self.reduce_position(local_trade, ticker)
-            else:  # local_side == "S"
-                # If we have no position or we are already short => add
-                if self.position[ticker] is None or self.position[ticker].side == "S":
-                    self.add_position(local_trade, ticker)
-                else:
-                    self.reduce_position(local_trade, ticker)
-
-    # for local info
-    def add_position(self, trade: Trade, ticker: str):
-        """
-        Increases/opens a position for 'ticker' using local trade info.
-        """
-        if self.position[ticker] is None:
-            # Open a new position
-            self.position[ticker] = Position(contract=trade.contract, price=trade.price, volume=trade.volume, side=trade.side, timestamp=trade.timestamp)
-        else:
-            # Increase existing position's volume, recalc avg price, etc.
-            self.position[ticker].add(trade)
-
-        self.trades[ticker].append(trade)
-        print(f"[add_position] {trade}")
-
-    # for local info
-    def reduce_position(self, trade: Trade, ticker: str):
-        """
-        Reduces or flips a position for 'ticker' using local trade info,
-        updates realized PnL, etc.
-        """
-        pos = self.position[ticker]
-        pos.reduce(trade)
-        if pos.volume == 0:
-            self.position[ticker] = None  # closed out
-
-        self.trades[ticker].append(trade)
-        self.pnl[ticker].append(trade)
-        print(f"[reduce_position] {trade}")
 
     def fetch_historical_data(self, symbol: str, start_date: dt.datetime, end_date: dt.datetime, bar_size: str, what_to_show: str = 'TRADES', use_rth: bool = True) -> pd.DataFrame:
         """
@@ -172,7 +143,7 @@ class IBClientLive:
         :return: DataFrame with columns: [Date, Open, High, Low, Close, Volume, ...]
         """
         contract = self.us_tech_stock(symbol)
-        duration_str = IBClient.get_ib_duration_str(start_date, end_date)
+        duration_str = IBClientLive.get_ib_duration_str(start_date, end_date)
         end_date_str = end_date.strftime("%Y%m%d %H:%M:%S") + " US/Eastern"
         #print('Fetching historical data for', symbol, 'from', start_date, 'to', end_date, '...', end='')
         try:
@@ -267,7 +238,6 @@ class IBClientLive:
 
         # Finally, slice strictly to [start, end]
         return all_intraday.loc[(all_intraday.index >= start) & (all_intraday.index <= end)]
-
 
 
     @staticmethod

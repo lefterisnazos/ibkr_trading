@@ -54,8 +54,7 @@ class LinearRegSigmaStrategyLive:
             df = self.ib.fetch_historical_data(symbol=ticker, start_date=start_date, end_date=end_date, bar_size='1 day')
             if df.empty:
                 print(f"[LiveStrategy] No daily data returned for {ticker}")
-                if df.empty:
-                    continue
+                continue
             self.lr_info[ticker] = self._compute_linregs_for_ticker(df)
 
     def _compute_linregs_for_ticker(self, df: pd.DataFrame):
@@ -80,7 +79,7 @@ class LinearRegSigmaStrategyLive:
         sigma = np.std(close_array, ddof=1)
         return {'slope': slope, 'intercept': intercept, 'sigma': sigma, 'n': len(close_array)}
 
-    def on_new_bar(self, ticker: str, open_price: float, bar_time: dt.datetime):
+    def on_new_bar(self, ticker: str, open_price: float, bar_time: dt.datetime, volume=100):
         """
         Called each time there's a new real-time bar for `ticker`.
         This is where we check if we open/close positions, and place orders via the IBClientLive.
@@ -106,10 +105,10 @@ class LinearRegSigmaStrategyLive:
             # Consider opening a new position:
             if (price < lr_med - self.medium_sigma_band_open*sigma_med) and (price < lr_long - self.long_sigma_band_open*sigma_long):
                 print(f"[{ticker}] Opening LONG at {price}")
-                self.ib.place_live_order(ticker, "BUY", 100, order_type="MKT")
+                self.ib.place_live_order(ticker, "BUY", volume, order_type="MKT")
             elif (price > lr_med + self.medium_sigma_band_open*sigma_med) and (price > lr_long + self.long_sigma_band_open*sigma_long):
                 print(f"[{ticker}] Opening SHORT at {price}")
-                self.ib.place_live_order(ticker, "SELL", 100, order_type="MKT")
+                self.ib.place_live_order(ticker, "SELL", volume, order_type="MKT")
         else:
             # If we have a position => check exit:
             if ticker_pos.side == "B":
