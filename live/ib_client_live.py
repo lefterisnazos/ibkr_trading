@@ -6,7 +6,7 @@ import math
 from typing import Dict, List, Tuple, Optional
 from tqdm import tqdm
 
-from ib_insync import MarketOrder, LimitOrder, StopOrder
+from ib_insync import MarketOrder, LimitOrder, StopOrder, Order, BracketOrder, Trade, Position
 
 # bars = ib.reqRealTimeBars(contract, whatToShow='TRADES', useRTH=True, barSize=5)
 # # bars is an ib_insync “RealTimeBarList” which updates automatically
@@ -36,9 +36,12 @@ class IBClientLive:
 
         # Book-keeping
         self.positions: Dict[str, Dict[str, float]] = {}
+        self.open_trades: Dict[str, List[IBTrade]] = {}
+        self.open_orders: Dict[str, List[Order]] = {}
 
-        self.trades: Dict[str, List[IBTrade]] = {}
-        self.pnl: Dict[str, List[IBTrade]] = {}
+        self.all_orders: Dict[str, List[Order]] = {}
+        self.all_trades: Dict[str, List[IBTrade]] = {}
+        self.all_executions: Dict[str, Dict[str, object]] = {}
 
     def connect(self):
         """
@@ -86,12 +89,35 @@ class IBClientLive:
         print(f"Placed {side} order for {quantity} shares of {contract.symbol} at {limit_price} (order: {order})")
         return trade
 
-    def get_orders(self, all_clients= False):
+    def get_orders(self, open_orders_only: bool = True) :
+        """
+        Retrieve either all orders or just open orders, grouping them by symbol.
+        :param open_orders_only: If True, fetch openOrders(), else fetch orders().
+        :return: Dictionary: { symbol -> list of Order objects }
+        """
+        if open_orders_only:
+            orders = self.ib.openOrders()
+            self.open_orders = self.group_by_symbol(orders)
+        else:
+            orders = self.ib.orders()
+            self.all_orders = self.group_by_symbol(orders)
 
+    def get_trades(self, open_trades_only: bool = True) :
+        """
+        Retrieve either all trades or just open trades, grouping them by symbol.
+        :param open_trades_only: If True, fetch openTrades(), else fetch trades().
+        """
+        if open_trades_only:
+            trades_list = self.ib.openTrades()
+            self.open_trades = self.group_by_symbol(trades_list)
+        else:
+            trades_list = self.ib.trades()
+            self.all_trades = self.group_by_symbol(trades_list)
+
+    def get_executions(self):
+        pass
 
     def get_positions(self, account, contract, pos, avgCost):
-        """
-        """
 
         positions = self.ib.positions()
         self.positions = {}
@@ -100,7 +126,48 @@ class IBClientLive:
 
         print(f"[on_position_update] Updated position: {contract.symbol} -> pos={pos}, avgCost={avgCost}")
 
+    def get_orders(self, this_session=True):
+        """
+        Fetch all open orders from IB, store in self.open_orders, and return them.
+        If all_clients=True, request all open orders across all clients (ib.reqAllOpenOrders()).
+        Otherwise, only the ones for this clientId (ib.reqOpenOrders()).
+        """
+        if not this_session:
+            # This will request open orders for all clients in TWS
+            open_orders = self.ib.openOrders()
+        else:
+            # This will request open orders just for this session
+            open_orders = self.ib.orders()
 
+        # Clear out old dictionary and repopulate
+        self.open_orders = {}
+        #order is of type Order
+
+        for order in open_orders:
+            order_id = order.orderId
+            symbol = order.contract.symbol
+            self.open_orders[order_id] = {'symbol': symbol, 'action': order.action, 'quantity': order.totalQuantity, 'orderType': order.orderType,
+                'limitPrice': getattr(order, 'lmtPrice', None), 'status': order.orderStatus.status, 'remaining': order.orderStatus.remaining, 'filled': order.orderStatus.filled}
+            print(f"[get_orders] Found open order: {order_id} -> {self.open_orders[order_id]}")
+
+        return self.open_orders
+
+
+
+    def get_all_executions(self):
+        """
+        Fetch all executions/fills from IB, store them in self.all_executions, and return them.
+        """
+        # executions() returns a dict of execId -> (contract, execution)
+        ib_execs = self.ib.executions()
+
+        self.all_executions = {}
+        for exec_id, (contract, execution) in ib_execs.items():
+            self.all_executions[exec_id] = {'symbol': contract.symbol, 'side': execution.side, 'shares': execution.shares, 'price': execution.avgPrice,
+                'time': execution.time, 'orderId': execution.orderId, 'execId': exec_id}
+            print(f"[get_all_executions] Execution {exec_id} -> {self.all_executions[exec_id]}")
+
+        return self.all_executions
     def on_trade_update(self, trade: IBTrade):
         """
         Called automatically whenever a trade is updated with partial fill, fill, etc.
@@ -260,3 +327,18 @@ class IBClientLive:
             # e.g., "2 Y" if 370 days
             years = math.ceil(delta_days / 365.0)
             return f"{years} Y"
+
+
+    def group_by_symbol(self, items) -> Dict[str, List[object]]:
+        """
+        Helper method to group objects by their contract.symbol.
+        :param items: A list of objects that must have `.contract.symbol`.
+        :return: Dictionary { 'SYMBOL': [item, item, ...], ... }
+        """
+        grouped = {}
+        for item in items:
+            symbol = item.contract.symbol
+            if symbol not in grouped:
+                grouped[symbol] = []
+            grouped[symbol].append(item)
+        return grouped
