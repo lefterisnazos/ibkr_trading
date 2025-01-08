@@ -6,7 +6,6 @@ from sklearn.linear_model import LinearRegression
 
 from pos_order_trade_live import *
 from live.ib_client_live import  *
-from base import BaseStrategy  # (Assume you have a common or parent class)
 
 
 # or from .BaseStrategy import BaseStrategy, if needed
@@ -20,8 +19,8 @@ class LinearRegSigmaStrategyLive:
       - relies on ib_client.on_trade_update to track positions
     """
 
-    def __init__(self, ib_client: IBClientLive, medium_lookback=20, long_lookback=40):
-        self.ib = ib_client
+    def __init__(self, ib_client: IBClientLive, medium_lookback=2, long_lookback=5):
+        self.ib_c = ib_client
         self.medium_lookback = medium_lookback
         self.long_lookback = long_lookback
 
@@ -52,7 +51,7 @@ class LinearRegSigmaStrategyLive:
         start_date = self.get_data_from(end_date) # or a smaller lookback
 
         for ticker in tickers:
-            df = self.ib.fetch_historical_data(symbol=ticker, start_date=start_date, end_date=end_date, bar_size='1 day')
+            df = self.ib_c.fetch_historical_data(symbol=ticker, start_date=start_date, end_date=end_date, bar_size='5 min')
             if df.empty:
                 print(f"[LiveStrategy] No daily data returned for {ticker}")
                 continue
@@ -100,18 +99,18 @@ class LinearRegSigmaStrategyLive:
 
 
         price = open_price  # from the bar
-        ticker_pos = self.ib.position.get(ticker, None)
+        ticker_pos = self.ib_c.position.get(ticker, None)
 
         # Example logic:
         if ticker_pos is None:
             # Consider opening a new position:
             if (price < lr_med - self.medium_sigma_band_open*sigma_med) and (price < lr_long - self.long_sigma_band_open*sigma_long):
                 print(f"[{ticker}] Opening LONG at {price}")
-                self.ib.place_live_order(ticker, "BUY", volume, order_type="MKT")
+                self.ib_c.place_live_order(ticker, "BUY", volume, order_type="MKT")
 
             elif (price > lr_med + self.medium_sigma_band_open*sigma_med) and (price > lr_long + self.long_sigma_band_open*sigma_long):
                 print(f"[{ticker}] Opening SHORT at {price}")
-                self.ib.place_live_order(ticker, "SELL", volume, order_type="MKT")
+                self.ib_c.place_live_order(ticker, "SELL", volume, order_type="MKT")
 
         else:
             # If we have a position => check exit:
@@ -120,21 +119,21 @@ class LinearRegSigmaStrategyLive:
                 # e.g. TP or SL conditions:
                 if price >= lr_med:
                     print(f"[{ticker}] Close LONG (TP) at {price}")
-                    self.ib.place_live_order(ticker, "SELL", ticker_pos.volume, order_type="MKT")
+                    self.ib_c.place_live_order(ticker, "SELL", ticker_pos.volume, order_type="MKT")
 
                 elif price <= (lr_med - self.medium_sigma_band_sl*sigma_med):
                     print(f"[{ticker}] Close LONG (SL) at {price}")
-                    self.ib.place_live_order(ticker, "SELL", ticker_pos.volume, order_type="MKT")
+                    self.ib_c.place_live_order(ticker, "SELL", ticker_pos.volume, order_type="MKT")
 
             else:
                 # short side
                 if price <= lr_med:
                     print(f"[{ticker}] Close SHORT (TP) at {price}")
-                    self.ib.place_live_order(ticker, "BUY", ticker_pos.volume, order_type="MKT")
+                    self.ib_c.place_live_order(ticker, "BUY", ticker_pos.volume, order_type="MKT")
 
                 elif price >= (lr_med + self.medium_sigma_band_sl*sigma_med):
                     print(f"[{ticker}] Close SHORT (SL) at {price}")
-                    self.ib.place_live_order(ticker, "BUY", ticker_pos.volume, order_type="MKT")
+                    self.ib_c.place_live_order(ticker, "BUY", ticker_pos.volume, order_type="MKT")
 
     def place_live_trade(self, ticker: str, side: str, qty: int, ref_price: float, order_type="MKT"):
         """
@@ -152,11 +151,11 @@ class LinearRegSigmaStrategyLive:
         now_ts = dt.datetime.now()
 
         # Place a real order with IB
-        contract = self.ib.us_tech_stock(ticker)
-        self.ib.place_live_order(contract, side=side.upper(),  # "BUY" or "SELL"
-                                 quantity=qty, order_type=order_type,  # e.g. 'MKT'
-                                 limit_price=None  # if LMT order, set a limit price
-                                 )
+        contract = self.ib_c.us_tech_stock(ticker)
+        self.ib_c.place_live_order(contract, side=side.upper(),  # "BUY" or "SELL"
+                                   quantity=qty, order_type=order_type,  # e.g. 'MKT'
+                                   limit_price=None  # if LMT order, set a limit price
+                                   )
 
         # We do NOT call self.add_position(...) or self.reduce_position(...) yet.
         # We let the 'fill' event trigger that in on_trade_update
