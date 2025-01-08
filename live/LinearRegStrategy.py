@@ -32,6 +32,7 @@ class LinearRegSigmaStrategyLive:
 
         # Store LR info
         self.lr_info: Dict[str, Dict[str, float]] = {}
+        self.tickers = []
 
     def get_data_from(self, start_date: dt.datetime):
         """
@@ -97,6 +98,7 @@ class LinearRegSigmaStrategyLive:
         sigma_med = lr_med_dict['sigma']
         sigma_long = lr_long_dict['sigma']
 
+
         price = open_price  # from the bar
         ticker_pos = self.ib.position.get(ticker, None)
 
@@ -106,24 +108,30 @@ class LinearRegSigmaStrategyLive:
             if (price < lr_med - self.medium_sigma_band_open*sigma_med) and (price < lr_long - self.long_sigma_band_open*sigma_long):
                 print(f"[{ticker}] Opening LONG at {price}")
                 self.ib.place_live_order(ticker, "BUY", volume, order_type="MKT")
+
             elif (price > lr_med + self.medium_sigma_band_open*sigma_med) and (price > lr_long + self.long_sigma_band_open*sigma_long):
                 print(f"[{ticker}] Opening SHORT at {price}")
                 self.ib.place_live_order(ticker, "SELL", volume, order_type="MKT")
+
         else:
             # If we have a position => check exit:
             if ticker_pos.side == "B":
+
                 # e.g. TP or SL conditions:
                 if price >= lr_med:
                     print(f"[{ticker}] Close LONG (TP) at {price}")
                     self.ib.place_live_order(ticker, "SELL", ticker_pos.volume, order_type="MKT")
+
                 elif price <= (lr_med - self.medium_sigma_band_sl*sigma_med):
                     print(f"[{ticker}] Close LONG (SL) at {price}")
                     self.ib.place_live_order(ticker, "SELL", ticker_pos.volume, order_type="MKT")
+
             else:
                 # short side
                 if price <= lr_med:
                     print(f"[{ticker}] Close SHORT (TP) at {price}")
                     self.ib.place_live_order(ticker, "BUY", ticker_pos.volume, order_type="MKT")
+
                 elif price >= (lr_med + self.medium_sigma_band_sl*sigma_med):
                     print(f"[{ticker}] Close SHORT (SL) at {price}")
                     self.ib.place_live_order(ticker, "BUY", ticker_pos.volume, order_type="MKT")
@@ -142,9 +150,6 @@ class LinearRegSigmaStrategyLive:
         # side in IB is typically "BUY" or "SELL"
         local_side = "B" if side.upper() == "BUY" else "S"
         now_ts = dt.datetime.now()
-
-        # The local Trade object is just for your internal book-keeping:
-        local_trade = Trade(contract=ticker, price=ref_price, volume=qty, side=local_side, timestamp=now_ts, comment=comment)
 
         # Place a real order with IB
         contract = self.ib.us_tech_stock(ticker)

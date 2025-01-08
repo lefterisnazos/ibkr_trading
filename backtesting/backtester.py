@@ -5,6 +5,8 @@ from typing import Dict, List
 from pos_order_trade import *
 import datetime as dt
 from backtesting.benchmarks import *
+
+
 class Backtester:
     def __init__(self, strategy, tickers):
         self.strategy = strategy

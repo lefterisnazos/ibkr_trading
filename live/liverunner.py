@@ -11,7 +11,8 @@ class LiveRunner:
         self.ib_client.account = "DU8057891"
         self.ib = self.ib_client.ib  # convenience
 
-        self.tickers = ["AAPL", "MSFT"]  # or pass them in
+        self.tickers = ["AAPL", "MSFT"]
+        self.strategy.tickers = self.tickers# or pass them in
 
         # For storing RealTimeBarList objects
         self.rtbars = {}  # {ticker: RealTimeBarList}
@@ -37,7 +38,7 @@ class LiveRunner:
         # 2) Subscribe to real-time bars
         for symbol in self.tickers:
             contract = self.ib_client.us_tech_stock(symbol)
-            rtb = self.ib_client.ib.reqRealTimeBars(contract, barSize=5, whatToShow='TRADES', useRTH=True)
+            rtb = self.ib.reqRealTimeBars(contract, barSize=5, whatToShow='TRADES', useRTH=True)
             self.rtbars[symbol] = rtb
 
         # 3) Register a barUpdateEvent callback for each rtb

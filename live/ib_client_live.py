@@ -126,34 +126,6 @@ class IBClientLive:
 
         print(f"[on_position_update] Updated position: {contract.symbol} -> pos={pos}, avgCost={avgCost}")
 
-    def get_orders(self, this_session=True):
-        """
-        Fetch all open orders from IB, store in self.open_orders, and return them.
-        If all_clients=True, request all open orders across all clients (ib.reqAllOpenOrders()).
-        Otherwise, only the ones for this clientId (ib.reqOpenOrders()).
-        """
-        if not this_session:
-            # This will request open orders for all clients in TWS
-            open_orders = self.ib.openOrders()
-        else:
-            # This will request open orders just for this session
-            open_orders = self.ib.orders()
-
-        # Clear out old dictionary and repopulate
-        self.open_orders = {}
-        #order is of type Order
-
-        for order in open_orders:
-            order_id = order.orderId
-            symbol = order.contract.symbol
-            self.open_orders[order_id] = {'symbol': symbol, 'action': order.action, 'quantity': order.totalQuantity, 'orderType': order.orderType,
-                'limitPrice': getattr(order, 'lmtPrice', None), 'status': order.orderStatus.status, 'remaining': order.orderStatus.remaining, 'filled': order.orderStatus.filled}
-            print(f"[get_orders] Found open order: {order_id} -> {self.open_orders[order_id]}")
-
-        return self.open_orders
-
-
-
     def get_all_executions(self):
         """
         Fetch all executions/fills from IB, store them in self.all_executions, and return them.
@@ -186,16 +158,11 @@ class IBClientLive:
             fill_qty = fill.execution.shares
             fill_time = fill.execution.time
 
-            # Create your local 'Trade' object
-            local_trade = Trade(contract=ticker, price=fill_price, volume=fill_qty, side=local_side, timestamp=fill_time,
-                comment=f"Live fill (execId={fill.execution.execId})")
-
             # Ensure we have a dictionary entry
             if ticker not in self.trades:
                 self.trades[ticker] = []
             if ticker not in self.pnl:
                 self.pnl[ticker] = []
-
 
     def fetch_historical_data(self, symbol: str, start_date: dt.datetime, end_date: dt.datetime, bar_size: str, what_to_show: str = 'TRADES', use_rth: bool = True) -> pd.DataFrame:
         """
