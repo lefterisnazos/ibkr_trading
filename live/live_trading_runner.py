@@ -24,15 +24,16 @@ class LiveRunner:
         3) Schedule on_schedule_tick every X minutes
         4) Enter main loop
         """
-        schedule.every().week().at("09:31").do(self.on_market_open)
-        schedule.every().week().at("16:25").do(self.on_market_close)
+        for weekday in (schedule.every().monday, schedule.every().tuesday, schedule.every().wednesday, schedule.every().thursday, schedule.every().friday):
+            weekday.at("09:31").do(self.on_market_open)
+            weekday.at("16:25").do(self.on_market_close)
 
         # For example, run on_schedule_tick every 5 minutes
         schedule.every(1).minutes.do(self.on_schedule_tick)
 
         while True:
             schedule.run_pending()
-            time.sleep(1)
+            self.ib.sleep(1)
 
     def on_market_open(self):
         """
@@ -52,11 +53,11 @@ class LiveRunner:
         1) If it's a new day, run 'prepare_data' once.
         2) If not yet subscribed, subscribe to real-time bars and attach callbacks.
         """
-        # If not connected, do nothing
+        # If not connected, connect
         if not self.ib.isConnected():
             self.ib_c.connect()
 
-        # 1) Check if date changed => retrain daily
+        # Check if date changed => retrain daily. Maybe that should be changed, because its strategy specific.
         today = dt.date.today()
         if self.last_prepared_day != today:
             print("[LiveRunner] New day => prepare_data.")
@@ -80,7 +81,7 @@ class LiveRunner:
                 # Attach callback properly, using lambda or partial
                 rtb.updateEvent += (lambda bars, hasNewBar, sym=ticker:
                                     self.on_realtime_bar(sym, bars))
-
+            self.ib.cancelRealTimeBars(rtb)
             self.subscribed = True
 
     def on_realtime_bar(self, ticker: str, bars: RealTimeBarList):

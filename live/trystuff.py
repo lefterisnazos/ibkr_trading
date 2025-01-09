@@ -3,17 +3,29 @@ from ib_client_live import *
 from ib_insync import MarketOrder, LimitOrder, StopOrder, Order, BracketOrder, Trade, Position
 from ib_insync import IB, Stock, util, Fill, Trade as IBTrade
 
+from ib_insync import IB, util
+
+ib = IB()
+ib.connect()  # Make sure you're connecting to TWS or IB Gateway
 client = IBClient()
-client.connect()
+contract = client.us_tech_stock(symbol="MSFT")
 
-contract = client.us_tech_stock('AAPL')
+rtb = ib.reqRealTimeBars(
+    contract,
+    barSize=5,
+    whatToShow='TRADES',
+    useRTH=True
+)
 
-ib = client.ib
+def onBarUpdate(bars, hasNewBar):
+    print("New real-time bar:", bars[-1])
 
-g = ib.positions()
-bracket_orders = ib.bracketOrder(action='BUY', quantity=1, limitPrice=200, takeProfitPrice=250, stopLossPrice=180)
-for order in bracket_orders:
-     ib.placeOrder(contract, order)
+# Subscribe to the 'updateEvent' on the RealTimeBarList
+rtb.updateEvent += onBarUpdate
+
+# Keep the script running to allow data to stream
+ib.run()
+
 
 x=2
 y=2
