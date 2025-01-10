@@ -25,7 +25,7 @@ class IBClientLive:
       - Receives tradeUpdate events
       - Provides methods to place orders & update positions
     """
-    def __init__(self, account, host='127.0.0.1', port=7497, client_id=25):
+    def __init__(self, account, host='127.0.0.1', port=7497, client_id=26):
         self.account = account
         self.host = host
         self.port = port
@@ -295,6 +295,20 @@ class IBClientLive:
             years = math.ceil(delta_days / 365.0)
             return f"{years} Y"
 
+    @staticmethod
+    def preprocess_historical_data(data):
+
+        df = util.df(data)
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        # Rename columns to a standard format
+        df.rename(columns={'date': 'Date', 'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'}, inplace=True)
+
+        df.set_index('Date', inplace=True)
+        df.sort_index(inplace=True)
+        df.index = pd.DatetimeIndex(df.index)
+        return df
 
     def group_by_symbol(self, items) -> Dict[str, List[object]]:
         """

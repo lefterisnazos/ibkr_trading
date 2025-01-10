@@ -1,5 +1,6 @@
 import schedule
 import time
+from ib_client_live import *
 import datetime as dt
 from ib_insync import IB, RealTimeBarList
 
@@ -8,6 +9,7 @@ class LiveRunner:
         self.strategy = strategy
         self.ib_c = strategy.ib_c  # convenience
         self.ib = self.ib_c.ib
+        self.ib_c.connect()
 
         self.ib_c.account = "DU8057891"
         self.tickers = ["MSFT"]
@@ -48,67 +50,63 @@ class LiveRunner:
         print("[LiveRunner] Market open: connected, ready for schedule ticks.")
 
     def on_schedule_tick(self):
-        """
-        Called every 5 minutes (example).
-        1) If it's a new day, run 'prepare_data' once.
-        2) If not yet subscribed, subscribe to real-time bars and attach callbacks.
-        """
-        # If not connected, connect
         if not self.ib.isConnected():
             self.ib_c.connect()
+            self.ib.sleep(1)
 
-        # Check if date changed => retrain daily. Maybe that should be changed, because its strategy specific.
         today = dt.date.today()
         if self.last_prepared_day != today:
             print("[LiveRunner] New day => prepare_data.")
             self.strategy.prepare_data(self.tickers)
             self.last_prepared_day = today
-            self.subscribed = False  # reset so we can re-subscribe once per new day
 
-        # 2) Subscribe to real-time bars only if not already done this day
+        # Subscribe to live bars if not already subscribed
+        # (Adjust logic as needed; this is just an example.)
         if not self.subscribed:
-            print("[LiveRunner] Subscribing to real-time bars for tickers...")
+            self.subscribed = True
             for ticker in self.tickers:
                 contract = self.ib_c.us_tech_stock(ticker)
-                rtb = self.ib.reqRealTimeBars(
-                    contract,
-                    barSize=5,
-                    whatToShow='MIDPOINT',
-                    useRTH=False
-                )
-                self.rtbars[ticker] = rtb
 
-                # Attach callback properly, using lambda or partial
-                rtb.updateEvent += (lambda bars, hasNewBar, sym=ticker:
-                                    self.on_realtime_bar(sym, bars))
-            self.ib.cancelRealTimeBars(rtb)
-            self.subscribed = True
+                # Request last 10 minutes of bars, 5-second resolution
+                bars = self.ib.reqHistoricalData(contract,
+                        endDateTime='',
+                        durationStr='15 mins',
+                        barSizeSetting='1 min',
+                        whatToShow='MIDPOINT',
+                        useRTH=False,
+                        formatDate=1, keepUpToDate=True)
 
-    def on_realtime_bar(self, ticker: str, bars: RealTimeBarList):
+                # store the BarDataList in a dict so we can cancel later
+                self.rtbars[ticker] = bars
+
+                # Attach the callback via a lambda capturing `ticker`
+                bars.updateEvent += lambda b_, new, t=ticker: self.onBarUpdate(b_, new, t)
+                self.ib.sleep(10)
+                self.ib.cancelHistoricalData(bars)
+
+    def onBarUpdate(self, bars_: RealTimeBarList, hasNewBar: bool, ticker: str):
         """
-        Called automatically whenever a new or updated bar arrives for 'ticker'.
+        The updateEvent from ib_insync BarDataList passes two arguments:
+          bars_ (BarDataList) and hasNewBar (bool).
+        We capture 'ticker' separately via a lambda default.
         """
-        if not bars:
-            return
-        latest_bar = bars[-1]
-        open_px = latest_bar.open
-        bar_ts = latest_bar.time
-        print(f"[on_realtime_bar] {ticker} at {bar_ts}, open={open_px}")
 
-        # Forward to strategy
-        self.strategy.on_new_bar(ticker, open_px, bar_ts, volume=1)
+        bars_ = IBClientLive.preprocess_historical_data(bars_)
+        if hasNewBar and bars_:
+            latest_bar = bars_[-1]
+            open_px = latest_bar.open
+            bar_ts = latest_bar.time
+
+            print(f"[on_realtime_bar] {ticker} at {bar_ts}, open={open_px}")
+
+            self.strategy.on_new_bar(ticker, open_px, bar_ts, volume=1)
 
     def on_market_close(self):
-        """
-        Called once each weekday at 16:25 (example).
-        1) Optionally flatten positions.
-        2) Cancel real-time bars.
-        3) Disconnect.
-        """
         print(f"[{dt.datetime.now()}] on_market_close: Flatten/Disconnect.")
 
+        # Cancel all real-time bars
         for ticker, bars_list in self.rtbars.items():
-            self.ib.cancelRealTimeBars(bars_list)
+            self.ib.cancelHistoricalData(bars_list)
         self.rtbars.clear()
         self.subscribed = False
 
