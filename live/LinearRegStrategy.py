@@ -84,6 +84,8 @@ class LinearRegSigmaStrategyLive:
         Called each time there's a new real-time bar for `ticker`.
         This is where we check if we open/close positions, and place orders via the IBClientLive.
         """
+        bartime_str = bar_time.strftime("%H:%M:%S")
+        print(f'evaluating signal for {ticker} at {bartime_str}')
         if ticker not in self.lr_info:
             return
 
