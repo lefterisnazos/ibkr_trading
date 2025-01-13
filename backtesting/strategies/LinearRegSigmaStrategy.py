@@ -27,7 +27,7 @@ class LinRegSigmaStrategy(BaseStrategy):
 
         # sigma multiplies for each subcase: open,tp, sl for all lookbacks in respect to volatility
         self.medium_sigma_band_open = 2
-        self.medium_sigma_band_tp = None
+        self.medium_sigma_band_tp = 2
         self.medium_sigma_band_sl = 4
 
         self.long_sigma_band_open = 2

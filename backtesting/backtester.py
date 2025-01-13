@@ -67,4 +67,10 @@ class Backtester:
         self.trades_df = self.trades_to_dataframe(self.trades)
         self.pnl_df = self.trades_to_dataframe(self.pnl)
 
+        pnl, return_ = 0, 0
+        for ticker, trade in self.trades.items():
+            for Trade in trade:
+                pnl = pnl + Trade.realized_pnl
+                return_ = return_ +Trade.realized_return
+        print(pnl, return_)
         return [self.trades_df, self.pnl_df]

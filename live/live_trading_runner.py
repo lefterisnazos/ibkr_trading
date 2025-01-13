@@ -5,7 +5,7 @@ import datetime as dt
 from ib_insync import IB, RealTimeBarList
 
 class LiveRunner:
-    def __init__(self, strategy):
+    def __init__(self, strategy, force_start=True):
         self.strategy = strategy
         self.ib_c = strategy.ib_c  # convenience
         self.ib = self.ib_c.ib
@@ -18,7 +18,7 @@ class LiveRunner:
         self.strategy.tickers = self.tickers
 
         # For storing subscriptions so we can cancel later
-        self.force_start = True
+        self.force_start = force_start
         self.rtbars = {}
         self.last_prepared_day = None
         self.subscribed = False

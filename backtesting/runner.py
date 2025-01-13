@@ -8,10 +8,10 @@ import builtins
 if __name__ == "__main__":
 
     # 2) Define ticker universe
-    tickers = ['QQQ']
+    tickers = ['JAZZ']
 
     # 3) Start & end date for backtest
-    start_date = dt.datetime(2024, 1, 1)
+    start_date = dt.datetime(2020, 1, 1)
     end_date = dt.datetime(2024, 10, 1)
 
     # 4) Instantiate the strategy
