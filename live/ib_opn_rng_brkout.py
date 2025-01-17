@@ -316,7 +316,6 @@ def usStkScan(asset_type="STK",asset_loc="STK.NASDAQ",scan_code="HIGH_OPEN_GAP")
     return scan_obj
 
 
-
 # function to establish the websocket connection to TWS
 def connection():
     app.run()

@@ -14,7 +14,7 @@ class TickerTable(qt.QTableWidget):
         'last', 'lastSize', 'close']
 
     def __init__(self, parent=None):
-        qt.QTableWidget.__init__(self, parent)
+        qt.QTableWidget.__init__(self, parent)   
         self.conId2Row = {}
         self.setColumnCount(len(self.headers))
         self.setHorizontalHeaderLabels(self.headers)
