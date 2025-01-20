@@ -70,7 +70,6 @@ class LiveRunner:
             for ticker in self.tickers:
                 contract = self.ib_c.us_tech_stock(ticker)
 
-                # This subscription gives you a bar every 1 minute
                 bars = self.ib.reqHistoricalData(
                     contract,
                     endDateTime='',

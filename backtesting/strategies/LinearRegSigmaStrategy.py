@@ -316,8 +316,6 @@ class LinrRegReversal(LinRegSigmaStrategy):
                 if price < lr_med - self.medium_sigma_band_open * sigma_med:
                     if price < lr_long - self.long_sigma_band_open * sigma_long:
                         volume = volume* 1.5
-
-                    self.position[ticker] = Position(contract=ticker, price=price, volume=volume, side="B", timestamp=timestamp)
                     open_trade = Trade(contract=ticker, price=virtual_buy_price, volume=volume, side="B", timestamp=timestamp, comment="Open long")
                     self.add_position(open_trade, ticker)
 
@@ -326,7 +324,6 @@ class LinrRegReversal(LinRegSigmaStrategy):
                     if price > lr_long + sigma_med * self.long_sigma_band_open:
                         volume = volume* 1.5
 
-                    self.position[ticker] = Position(contract=ticker, price=price, volume=volume*1.5, side="S", timestamp=timestamp)
                     open_trade = Trade(contract=ticker, price=virtual_sell_price, volume=volume*1.5, side="S", timestamp=timestamp, comment="Open short")
                     self.add_position(open_trade, ticker)
 
