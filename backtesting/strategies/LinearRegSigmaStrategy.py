@@ -90,7 +90,7 @@ class LinRegSigmaStrategy(BaseStrategy):
             simulation_index = df[df.index >= self.start_date].index
 
             print(f'Loading intraday data for {ticker} from {simulation_index[0]} to {simulation_index[-1]}...\n', end='')
-            intraday_all = self.ib_client.fetch_intraday_in_chunks(ticker=ticker, start=simulation_index[0], end=simulation_index[-1] + dt.timedelta(days=1), bar_size="30 mins", chunk_size_request=60)
+            intraday_all = self.ib_client.fetch_intraday_in_chunks(ticker=ticker, start=simulation_index[0], end=simulation_index[-1] + dt.timedelta(days=1), bar_size="1 hour", chunk_size_request=360)
 
             with alive_bar(len(simulation_index), title=f"finished simulating for {ticker}") as bar:
                 for simulation_date in simulation_index:
