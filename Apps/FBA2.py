@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 
+
 ###############################################################################
 # Helper functions
 ###############################################################################
@@ -25,13 +26,12 @@ def make_duration_str(days: int) -> str:
             years = 1
         return f"{years} Y"
 
+
 def computeDailyRegressions(df_daily: pd.DataFrame, lb: int) -> pd.DataFrame:
     """
-    1) Slices the last `lb` rows of df_daily (with columns [open,high,low,close]),
-    2) Performs OLS => build a DataFrame with columns [lr_value, lr_plus_2, lr_minus_2]
-       for each daily row in that slice.
-
-    If insufficient data => empty DataFrame.
+    1) Slices the last `lb` rows of df_daily,
+    2) Performs OLS => returns a DataFrame with [lr_value, lr_plus_2, lr_minus_2].
+    If insufficient data => empty DF.
     """
     if df_daily is None or df_daily.empty or len(df_daily) < lb or lb < 5:
         return pd.DataFrame()
@@ -51,43 +51,43 @@ def computeDailyRegressions(df_daily: pd.DataFrame, lb: int) -> pd.DataFrame:
     df_pred['lr_minus_2'] = df_pred['lr_value'] - 2*sigma
     return df_pred
 
+
 def mergeDailyPredictionsInto15Min(df_15m: pd.DataFrame, df_pred: pd.DataFrame) -> pd.DataFrame:
     """
-    As-of merge. For each 15-min bar, we attach the "last known" daily row
-    whose index <= bar's timestamp. This way each 15-min bar row has
-    [lr_value, lr_plus_2, lr_minus_2].
+    Merge df_pred (daily lines) into df_15m (15-min bars) with an as-of merge.
+    Both must have a DateTimeIndex. We also ensure they share the same tz.
     """
     if df_15m.empty or df_pred.empty:
         return pd.DataFrame()
-    df_pred.index = pd.to_datetime(df_pred.index).tz_localize(df_15m.index.tz)
+
+    # Match time zones (if df_15m is tz-aware)
+    if df_15m.index.tz is not None:
+        df_pred.index = pd.to_datetime(df_pred.index).tz_localize(df_15m.index.tz)
 
     df_15m = df_15m.sort_index()
     df_pred = df_pred.sort_index()
 
     merged = pd.merge_asof(
-        df_15m,
-        df_pred,
+        df_15m, df_pred,
         left_index=True,
         right_index=True,
         direction='backward'
     )
     return merged
 
+
 def findMostRecentHit(merged_15m: pd.DataFrame) -> (str, float):
     """
-    1) Each 15-min row has [lr_value, lr_plus_2, lr_minus_2].
-    2) Scan from the newest bar to the oldest to see if plus_2 or minus_2 or mean is in [low, high].
-    3) Priority: lr_plus_2, lr_minus_2, lr_value (change if you prefer).
-    4) Return (whichLine, lineVal) or (None, None).
+    Scan from newest to oldest 15-min bar. Check if lr_plus_2, lr_minus_2, or lr_value
+    is in [low, high]. Priority: +2σ, -2σ, mean.
+    Return (whichLine, lineVal) or (None,None).
     """
     if merged_15m.empty:
-        print('merged_15 is empty')
         return (None, None)
 
     for i in range(len(merged_15m)-1, -1, -1):
         row = merged_15m.iloc[i]
-        low_ = row['low']
-        high_ = row['high']
+        low_, high_ = row['low'], row['high']
         plus_ = row['lr_plus_2']
         minus_ = row['lr_minus_2']
         mean_ = row['lr_value']
@@ -104,39 +104,28 @@ def findMostRecentHit(merged_15m: pd.DataFrame) -> (str, float):
 
     return (None, None)
 
-def compareToCurrentBar(merged_15m: pd.DataFrame, whichBand: str, lineVal: float) -> str:
+
+def compareToCurrentBar(merged_15m: pd.DataFrame, whichLine: str, lineVal: float) -> str:
     """
-    Compare lineVal to the *latest* 15-min row's average => '++','--','+','-' or 'N/A'.
+    Compare lineVal to the *latest* 15-min bar's average => '++','--','+','-' or 'N/A'.
     """
-    if not whichBand:
-        return "N/A"
-    if merged_15m.empty:
+    if not whichLine or merged_15m.empty:
         return "N/A"
 
     latest = merged_15m.iloc[-1]
     avg_15m = (latest['open'] + latest['high'] + latest['low'] + latest['close']) / 4.0
     from_below = (avg_15m > lineVal)
 
-    if whichBand in ("lr_plus_2", "lr_minus_2"):
+    if whichLine in ("lr_plus_2", "lr_minus_2"):
         return "++" if from_below else "--"
     else:
         return "+" if from_below else "-"
+
 
 ###############################################################################
 # TickerTable
 ###############################################################################
 class TickerTable(qt.QTableWidget):
-    """
-    8 columns:
-      0 Symbol
-      1 Last (real-time)
-      2 ShortLB (editable)
-      3 MedLB   (editable)
-      4 LongLB  (editable)
-      5 ShortSignal
-      6 MediumSignal
-      7 LongSignal
-    """
     headers = [
         'Symbol', 'Last',
         'ShortLB', 'MedLB', 'LongLB',
@@ -166,6 +155,7 @@ class TickerTable(qt.QTableWidget):
                 item.setFlags(item.flags() | Qt.ItemIsEditable)
             self.setItem(row, col, item)
 
+        # fill basic info
         self.item(row, 0).setText(ticker.contract.symbol)  # Symbol
         self.item(row, 1).setText('-')  # Last
         self.item(row, 2).setText(str(shortLB))
@@ -175,20 +165,13 @@ class TickerTable(qt.QTableWidget):
         self.resizeColumnsToContents()
 
     def onPendingTickers(self, tickers):
-        """
-        Update the 'Last' column (col=1) with real-time last price.
-        """
         for t in tickers:
             row = self.conId2Row.get(t.contract.conId)
-            if row is not None:
+            if row is not None and t.last is not None:
                 last_item = self.item(row, 1)
-                if t.last is not None:
-                    last_item.setText(f"{t.last:.2f}")
+                last_item.setText(f"{t.last:.2f}")
 
     def setSignals(self, conId, shortSig, medSig, longSig):
-        """
-        Update columns 5,6,7 with the final signals.
-        """
         row = self.conId2Row.get(conId)
         if row is None:
             return
@@ -200,18 +183,19 @@ class TickerTable(qt.QTableWidget):
         self.setRowCount(0)
         self.conId2Row.clear()
 
+
 ###############################################################################
 # MainWindow
 ###############################################################################
 class MainWindow(qt.QWidget):
     """
-    - Connect/Disconnect to IB
-    - Add Tickers => table
-    - "Compute Signals" => for each ticker:
-       1) read shortLB, medLB, longLB
-       2) single daily fetch for maxLB => produce 3 sets of predictions (short, med, long)
-       3) 15-min bars => merge with each set => find most recent hit => compare => signal
-       4) store signals in the table
+    - We have 2 steps:
+       1) "Update Regressions" => fetch daily data, produce short/med/long predictions, store in self.regressions_dict[conId].
+       2) "Compute Signals" => fetch 15-min data, do merges/hits => table signals.
+
+    - If user tries to compute signals without having regressions, we show a message.
+
+    - A QTimer calls 'Compute Signals' automatically every 15 min.
     """
 
     def __init__(self, host='127.0.0.1', port=7497, clientId=1):
@@ -220,6 +204,14 @@ class MainWindow(qt.QWidget):
         self.ib.pendingTickersEvent += self.onPendingTickers
 
         self.connectInfo = (host, port, clientId)
+
+        # Dictionary to store per-ticker predictions:
+        # self.regressions_dict[conId] = {
+        #   "shortPred": df_short,  # daily lines
+        #   "medPred":   df_med,
+        #   "longPred":  df_long
+        # }
+        self.regressions_dict = {}
 
         # UI
         self.connectBtn = QPushButton("Connect")
@@ -232,8 +224,11 @@ class MainWindow(qt.QWidget):
 
         self.table = TickerTable()
 
-        self.computeBtn = QPushButton("Compute Signals")
-        self.computeBtn.clicked.connect(self.onComputeSignals)
+        self.updateRegBtn = QPushButton("Update Regressions")
+        self.updateRegBtn.clicked.connect(self.onUpdateRegressions)
+
+        self.signalsBtn = QPushButton("Compute Signals")
+        self.signalsBtn.clicked.connect(self.onComputeSignals)
 
         # Layout
         topLayout = QHBoxLayout()
@@ -245,17 +240,19 @@ class MainWindow(qt.QWidget):
         mainLayout = QVBoxLayout(self)
         mainLayout.addLayout(topLayout)
         mainLayout.addWidget(self.table)
-        mainLayout.addWidget(self.computeBtn)
 
-        self.setWindowTitle("PyQt + ib_insync: Final LR w/ 3 lookbacks + hits")
+        bottomLayout = QHBoxLayout()
+        bottomLayout.addWidget(self.updateRegBtn)
+        bottomLayout.addWidget(self.signalsBtn)
+        mainLayout.addLayout(bottomLayout)
 
-        # QTimer for auto signals (if desired)
+        self.setWindowTitle("PyQt + ib_insync: Split Regressions vs. Signals")
+
+        # QTimer for auto signals
         self.timer = QTimer()
-        self.timer.setInterval(15*60*1000)  # 15 min in ms
+        self.timer.setInterval(15*60*1000)  # 15 min
         self.timer.timeout.connect(self.onComputeSignals)
-
-        self.df_short, self.df_med, self.df_long = None, None, None
-        # self.timer.start()  # uncomment to auto-run signals
+        # self.timer.start()  # optionally start auto updates
 
     def onConnectClicked(self):
         if self.ib.isConnected():
@@ -284,136 +281,13 @@ class MainWindow(qt.QWidget):
     def onPendingTickers(self, tickers):
         self.table.onPendingTickers(tickers)
 
-    def get_regressions(self):
-
-        if not self.ib.isConnected():
-            print("Not connected.")
-            return
-
-        for conId, rowIdx in self.table.conId2Row.items():
-            # find Ticker
-            found = None
-            for t in self.ib.tickers():
-                if t.contract.conId == conId:
-                    found = t
-                    break
-            if not found:
-                continue
-            contract = found.contract
-
-            # read shortLB, medLB, longLB from table
-            shortLB_str = self.table.item(rowIdx, 2).text()
-            medLB_str   = self.table.item(rowIdx, 3).text()
-            longLB_str  = self.table.item(rowIdx, 4).text()
-            try:
-                shortLB = int(shortLB_str)
-                medLB   = int(medLB_str)
-                longLB  = int(longLB_str)
-            except ValueError:
-                self.table.setSignals(conId, "Err", "Err", "Err")
-                continue
-
-            maxLB = max(shortLB, medLB, longLB)
-            if maxLB < 5:
-                self.table.setSignals(conId, "NoData", "NoData", "NoData")
-                continue
-
-            # 1) daily fetch
-            # e.g. 2 * maxLB => days. If > 365, use Y.
-            days_needed = maxLB * 2
-            durationStr = make_duration_str(days_needed)
-            try:
-                daily_bars = self.ib.reqHistoricalData(
-                    contract,
-                    endDateTime='',
-                    durationStr=durationStr,
-                    barSizeSetting='1 day',
-                    whatToShow='TRADES',
-                    useRTH=False,
-                    keepUpToDate=False
-                )
-            except asyncio.TimeoutError:
-                self.table.setSignals(conId, "Timeout", "Timeout", "Timeout")
-                continue
-            df_daily = util.df(daily_bars)
-            if df_daily.empty or len(df_daily) < 5:
-                self.table.setSignals(conId, "NoData", "NoData", "NoData")
-                continue
-
-            df_daily.set_index('date', inplace=True)
-
-            # shortPred, medPred, longPred
-            self.df_short = computeDailyRegressions(df_daily, shortLB)
-            self.df_med   = computeDailyRegressions(df_daily, medLB)
-            self.df_long  = computeDailyRegressions(df_daily, longLB)
-
-
-    def onComputeSignals2(self):
-
-        if not self.ib.isConnected():
-            print("Not connected.")
-            return
-
-        for conId, rowIdx in self.table.conId2Row.items():
-            # find Ticker
-            found = None
-            for t in self.ib.tickers():
-                if t.contract.conId == conId:
-                    found = t
-                    break
-            if not found:
-                continue
-            contract = found.contract
-
-            # 2) 15-min bars
-            # we just do ~ 15 days
-            try:
-                bars_15 = self.ib.reqHistoricalData(
-                    contract,
-                    endDateTime='',
-                    durationStr='15 D',
-                    barSizeSetting='15 mins',
-                    whatToShow='TRADES',
-                    useRTH=False,
-                    keepUpToDate=False
-                )
-            except asyncio.TimeoutError:
-                self.table.setSignals(conId, "Timeout", "Timeout", "Timeout")
-                continue
-
-            df15 = util.df(bars_15)
-            if df15.empty:
-                self.table.setSignals(conId, "NoData", "NoData", "NoData")
-                continue
-
-            df15.set_index('date', inplace=True)
-
-            # short
-            merged_short = mergeDailyPredictionsInto15Min(df15, self.df_short)
-            wline_s, val_s = findMostRecentHit(merged_short)
-            shortSig = compareToCurrentBar(merged_short, wline_s, val_s)
-
-            # medium
-            merged_med = mergeDailyPredictionsInto15Min(df15, self.df_med)
-            wline_m, val_m = findMostRecentHit(merged_med)
-            medSig = compareToCurrentBar(merged_med, wline_m, val_m)
-
-            # long
-            merged_long = mergeDailyPredictionsInto15Min(df15, self.df_long)
-            wline_l, val_l = findMostRecentHit(merged_long)
-            longSig = compareToCurrentBar(merged_long, wline_l, val_l)
-
-            # store signals
-            self.table.setSignals(conId, shortSig, medSig, longSig)
-
-    def onComputeSignals(self):
+    ###########################################################################
+    # Step 1: "Update Regressions"
+    ###########################################################################
+    def onUpdateRegressions(self):
         """
-        For each ticker row:
-          1) read shortLB, medLB, longLB
-          2) single daily fetch for maxLB => build shortPred, medPred, longPred
-          3) fetch 15-min bars => for each (short,med,long):
-               - merge => find most recent hit => compare => signal
-          4) store signals in table
+        For each ticker, fetch daily bars (based on largest LB),
+        compute shortPred, medPred, longPred => store in self.regressions_dict[conId].
         """
         if not self.ib.isConnected():
             print("Not connected.")
@@ -430,7 +304,7 @@ class MainWindow(qt.QWidget):
                 continue
             contract = found.contract
 
-            # read shortLB, medLB, longLB from table
+            # read shortLB, medLB, longLB
             shortLB_str = self.table.item(rowIdx, 2).text()
             medLB_str   = self.table.item(rowIdx, 3).text()
             longLB_str  = self.table.item(rowIdx, 4).text()
@@ -447,10 +321,10 @@ class MainWindow(qt.QWidget):
                 self.table.setSignals(conId, "NoData", "NoData", "NoData")
                 continue
 
-            # 1) daily fetch
-            # e.g. 2 * maxLB => days. If > 365, use Y.
             days_needed = maxLB * 2
             durationStr = make_duration_str(days_needed)
+            print(f"Updating daily regs for {contract.symbol}, LB={shortLB,medLB,longLB}, dur={durationStr}")
+
             try:
                 daily_bars = self.ib.reqHistoricalData(
                     contract,
@@ -464,27 +338,70 @@ class MainWindow(qt.QWidget):
             except asyncio.TimeoutError:
                 self.table.setSignals(conId, "Timeout", "Timeout", "Timeout")
                 continue
+
             df_daily = util.df(daily_bars)
             if df_daily.empty or len(df_daily) < 5:
                 self.table.setSignals(conId, "NoData", "NoData", "NoData")
                 continue
 
             df_daily.set_index('date', inplace=True)
-
-            # shortPred, medPred, longPred
             df_short = computeDailyRegressions(df_daily, shortLB)
             df_med   = computeDailyRegressions(df_daily, medLB)
             df_long  = computeDailyRegressions(df_daily, longLB)
 
-            self.df_short, self.df_med, self.df_long = df_short, df_med, df_long
+            self.regressions_dict[conId] = {
+                "shortPred": df_short,
+                "medPred":   df_med,
+                "longPred":  df_long
+            }
+            print(f"{contract.symbol} => updated regressions.")
 
-            # 2) 15-min bars
-            # we just do ~ 15 days
+    ###########################################################################
+    # Step 2: "Compute Signals"
+    ###########################################################################
+    def onComputeSignals(self):
+        """
+        For each ticker, if we have daily predictions stored,
+        then fetch 15-min bars => merge + find hits => table signals.
+        Otherwise, ask user to "Update Regressions" first.
+        """
+        if not self.ib.isConnected():
+            print("Not connected.")
+            return
+
+        for conId, rowIdx in self.table.conId2Row.items():
+            # find Ticker
+            found = None
+            for t in self.ib.tickers():
+                if t.contract.conId == conId:
+                    found = t
+                    break
+            if not found:
+                continue
+            contract = found.contract
+
+            # do we have predictions?
+            preds = self.regressions_dict.get(conId)
+            if not preds:
+                self.table.setSignals(conId, "UpdateFirst", "UpdateFirst", "UpdateFirst")
+                continue
+
+            df_short = preds["shortPred"]
+            df_med   = preds["medPred"]
+            df_long  = preds["longPred"]
+
+            if df_short.empty or df_med.empty or df_long.empty:
+                self.table.setSignals(conId, "NoData", "NoData", "NoData")
+                continue
+
+            print(f"Computing signals for {contract.symbol} ...")
+
+            # fetch 15-min bars
             try:
                 bars_15 = self.ib.reqHistoricalData(
                     contract,
                     endDateTime='',
-                    durationStr='15 D',
+                    durationStr='25 D',
                     barSizeSetting='15 mins',
                     whatToShow='TRADES',
                     useRTH=False,
@@ -496,37 +413,37 @@ class MainWindow(qt.QWidget):
 
             df15 = util.df(bars_15)
             if df15.empty:
-                self.table.setSignals(conId, "NoData", "NoData", "NoData")
+                self.table.setSignals(conId, "No15m", "No15m", "No15m")
                 continue
 
             df15.set_index('date', inplace=True)
 
             # short
-            merged_short = mergeDailyPredictionsInto15Min(df15, df_short)
-            wline_s, val_s = findMostRecentHit(merged_short)
-            shortSig = compareToCurrentBar(merged_short, wline_s, val_s)
+            merged_s = mergeDailyPredictionsInto15Min(df15, df_short)
+            b_s, v_s = findMostRecentHit(merged_s)
+            shortSig = compareToCurrentBar(merged_s, b_s, v_s)
 
-            # medium
-            merged_med = mergeDailyPredictionsInto15Min(df15, df_med)
-            wline_m, val_m = findMostRecentHit(merged_med)
-            medSig = compareToCurrentBar(merged_med, wline_m, val_m)
+            # med
+            merged_m = mergeDailyPredictionsInto15Min(df15, df_med)
+            b_m, v_m = findMostRecentHit(merged_m)
+            medSig = compareToCurrentBar(merged_m, b_m, v_m)
 
             # long
-            merged_long = mergeDailyPredictionsInto15Min(df15, df_long)
-            wline_l, val_l = findMostRecentHit(merged_long)
-            longSig = compareToCurrentBar(merged_long, wline_l, val_l)
+            merged_l = mergeDailyPredictionsInto15Min(df15, df_long)
+            b_l, v_l = findMostRecentHit(merged_l)
+            longSig = compareToCurrentBar(merged_l, b_l, v_l)
 
-            # store signals
             self.table.setSignals(conId, shortSig, medSig, longSig)
+            print(f'Computed Signals for {contract.symbol}')
 
-    def closeEvent(self, ev):
+    def closeEvent(self, event):
         loop = util.getLoop()
         loop.stop()
 
 
-
 ###############################################################################
 # Launch
+###############################################################################
 if __name__ == '__main__':
     util.patchAsyncio()
     util.useQt()
@@ -536,6 +453,6 @@ if __name__ == '__main__':
     window.show()
 
     # Optionally start auto signals:
-    # window.timer.start()
+    window.timer.start()
 
     IB.run()
