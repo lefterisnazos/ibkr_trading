@@ -19,7 +19,7 @@ class MyLinkedList:
 
     def get(self, index: int) -> int:
         cur = self.left.next
-        while cur and index<0:
+        while cur and index>0:
             cur = cur.next
             index =-1
 
@@ -51,7 +51,7 @@ class MyLinkedList:
 
     def addAtIndex(self, index: int, val: int) -> None:
         cur = self.left.next
-        while cur  and index <0:
+        while cur  and index >0:
             index -= 1
             cur = cur.next
 
@@ -214,9 +214,6 @@ def build_thefucking_tree(items):
 numbers_tree = build_thefucking_tree([17,4,1,20,9,23,18,34])
 numbers_tree.delete(20)
 print( 'after deleterin 20', numbers_tree.in_order_traversal())
-
-
-x=2
 
 
 
