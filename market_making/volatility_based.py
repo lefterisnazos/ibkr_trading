@@ -148,7 +148,7 @@ class VolatilityMarketMaker:
         """
         self.atr_value = self.compute_ATR(self.bars, self.atr_period)
 
-    def dynamic_spread(self, mid_price):
+    def dynamic_spread(self):
         """
         Calculate the final dynamic spread using ATR, base spread, directional bias,
         and risk manager's inventory skew.
@@ -174,6 +174,7 @@ class VolatilityMarketMaker:
             # Example: reduce spread by up to 20% if bias is +1, or increase if bias is -1
             # (You can customize this scaling function as you like.)
             spread *= (1 - 0.2 * self.directional_bias)
+            print(f'{self.contract.symbol}: directional adjustment by {(1 - 0.2 * self.directional_bias)}')
 
         return spread
 
@@ -303,7 +304,7 @@ if __name__ == '__main__':
     ib.connect('127.0.0.1', 7497, clientId=101)
 
     # Define the contract to trade
-    contract = Stock('AAPL', 'SMART', 'USD')
+    contract = Stock('NBIS', 'SMART', 'USD')
     ib.qualifyContracts(contract)
 
     # Create a RiskManager

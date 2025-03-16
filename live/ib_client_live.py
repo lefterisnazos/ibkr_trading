@@ -135,8 +135,13 @@ class IBClientLive:
 
         self.all_executions = {}
         for exec_id, (contract, execution) in ib_execs.items():
-            self.all_executions[exec_id] = {'symbol': contract.symbol, 'side': execution.side, 'shares': execution.shares, 'price': execution.avgPrice,
-                'time': execution.time, 'orderId': execution.orderId, 'execId': exec_id}
+            self.all_executions[exec_id] = {'symbol': contract.symbol,
+                                            'side': execution.side,
+                                            'shares': execution.shares,
+                                            'price': execution.avgPrice,
+                                            'time': execution.time,
+                                            'orderId': execution.orderId,
+                                            'execId': exec_id}
             print(f"[get_all_executions] Execution {exec_id} -> {self.all_executions[exec_id]}")
 
         return self.all_executions
