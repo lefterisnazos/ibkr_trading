@@ -216,11 +216,12 @@ class IBStockAnalyzer(IBClientLive):
         return corr_matrix
 
 
-tickers = ['QQQ','TSLA', 'SBUX', 'NBIS', 'OKLO' , 'MSTR']
-reference = ['QQQ','VXX','SPY', 'BTC']
-period_start = dt.datetime(2025, 2, 1)
+tickers = ['QQQ','TSLA', 'SBUX', 'NBIS', 'OKLO' , 'MSTR', 'VXX']
+reference = ['QQQ','SPY',]
+period_start = dt.datetime(2025, 1, 1)
 period_end = dt.datetime(2025, 3, 13)
-anal = IBStockAnalyzer(tickers,reference, '1 hour', client_id=26)
+anal = IBStockAnalyzer(tickers,reference, '30 mins', client_id=26)
 
 betas = anal.analyze_betas(period_start=period_start, period_end=period_end)
+corr = anal.analyze_correlations(period_start=period_start, period_end=period_end)
 x=2
