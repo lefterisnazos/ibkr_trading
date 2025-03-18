@@ -12,7 +12,6 @@ from ib_insync import IB, Stock, util
    * Then adjusts the stop-loss and take-profit prices by widening 
       (if volatility increased) or tightening (if volatility decreased) the original distance from the entry.
 '''
-   bv
 
 util.startLoop()  # only needed if running in an interactive environment
 

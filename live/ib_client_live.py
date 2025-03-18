@@ -60,12 +60,35 @@ class IBClientLive:
         self.ib.disconnect()
         print("Disconnected from IB.")
 
-    def us_tech_stock(self, symbol: str, exchange: str = 'SMART', currency: str = 'USD'):
+    def create_contract(self, symbol: str):
         """
-        Create an ib_insync Stock contract for a US equity.
+        Attempt to find a valid contract for `symbol` by trying multiple
+        exchange/currency combinations and calling `ib.qualifyContracts`.
+        Returns the first matching contract, or None if none match.
+        """
+        # Common guesses for various exchanges
+        guesses = [
+            Stock(symbol, 'SMART', 'USD'),   # US listings
+            Stock(symbol, 'AEB', 'EUR'),  # Euronext Amsterdam
+            Stock(symbol, 'LSE', 'GBP'),  # London Stock Exchange
+            Stock(symbol, 'SBF', 'EUR'),     # Euronext Paris (France)
+            Stock(symbol, 'IBIS', 'EUR'),    # Xetra/Frankfurt (Germany)
+            Stock(symbol, 'BVME', 'EUR'),    # Borsa Italiana (Italy) - code may vary
+            Stock(symbol, 'BOVESPA', 'BRL'), # Brazil
+            Stock(symbol, 'BCBA', 'ARS'),    # Argentina
+            Stock(symbol, 'SEHK', 'HKD'),    # Hong Kong
+            Stock(symbol, 'TSE', 'JPY'),     # Tokyo Stock Exchange
+            Stock(symbol, 'ATH', 'EUR')   # Athens Stock Exchange
+        ]
 
-        """
-        return Stock(symbol, exchange=exchange, currency=currency)
+        for guess in guesses:
+            qualified_list = self.ib.qualifyContracts(guess)
+            if qualified_list:
+                # If there's a unique match or we just take the first match
+                return qualified_list[0]
+
+        # If no guess matched
+        return None
 
     def subscribe_realtime_bars(self, contract, bar_size=5, what_to_show='TRADES'):
         """
@@ -181,10 +204,21 @@ class IBClientLive:
         :param use_rth: Whether to use regular trading hours only.
         :return: DataFrame with columns: [Date, Open, High, Low, Close, Volume, ...]
         """
-        contract = self.us_tech_stock(symbol)
-        duration_str = IBClientLive.get_ib_duration_str(start_date, end_date)
-        end_date_str = end_date.strftime("%Y%m%d %H:%M:%S") + " US/Eastern"
-        #print('Fetching historical data for', symbol, 'from', start_date, 'to', end_date, '...', end='')
+        contract = self.create_contract(symbol)
+        if not contract:
+            print(f"Could not find a valid contract for {symbol}.")
+            return pd.DataFrame()
+
+        # Determine the correct time zone suffix for this exchange
+        tz_suffix = self.get_exchange_timezone(contract.exchange)
+        if tz_suffix == 'US/Eastern':
+            # e.g. '20250313 23:59:59 Europe/London'
+            end_date_str = end_date.strftime("%Y%m%d %H:%M:%S") + 'US/Eastern'
+        else:
+            end_date_str = end_date.strftime("%Y%m%d %H:%M:%S")
+
+        duration_str = self.get_ib_duration_str(start_date, end_date)
+
         try:
             bars = self.ib.reqHistoricalData(
                 contract=contract,
@@ -205,15 +239,17 @@ class IBClientLive:
             return pd.DataFrame()
 
         # Rename columns to a standard format
-        df.rename(columns={
-            'date': 'Date',
-            'open': 'Open',
-            'high': 'High',
-            'low': 'Low',
-            'close': 'Close',
-            'volume': 'Volume'
-        }, inplace=True)
-
+        df.rename(
+            columns={
+                'date': 'Date',
+                'open': 'Open',
+                'high': 'High',
+                'low': 'Low',
+                'close': 'Close',
+                'volume': 'Volume'
+            },
+            inplace=True
+        )
         df.set_index('Date', inplace=True)
         df.sort_index(inplace=True)
         df.index = pd.DatetimeIndex(df.index)
@@ -314,6 +350,29 @@ class IBClientLive:
         df.sort_index(inplace=True)
         df.index = pd.DatetimeIndex(df.index)
         return df
+
+    @staticmethod
+    def get_exchange_timezone(exchange: str) -> str:
+        """
+        Return the appropriate time zone suffix for endDateTime, for the fetch_historical_data function.
+        based on the exchange. If not found, either return '' or
+        a default (e.g. 'US/Eastern').
+        """
+        exchange_tz_map = {
+            'SMART': 'US/Eastern',
+            'NYSE': 'US/Eastern',
+            'AMEX': 'US/Eastern',
+            'NASDAQ': 'US/Eastern',
+            'AEB': 'Amsterdam',
+            'SBF': 'Paris',
+            'IBIS': 'Frankfurt',
+            'BVME': 'Milan',
+            'LSE': 'London',
+            'SEHK': 'HongKong',
+            'TSE': 'Tokyo',
+            'ATH': 'Athens',
+        }
+        return exchange_tz_map.get(exchange, '')
 
     def group_by_symbol(self, items) -> Dict[str, List[object]]:
         """

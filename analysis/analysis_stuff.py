@@ -1,12 +1,14 @@
 from live.ib_client_live import IBClientLive
 import time
 import datetime as dt
+import numpy as np
 import pandas as pd
 import math
 from typing import Dict, List, Optional
 from tqdm import tqdm
 from ib_insync import Index
 import matplotlib.pyplot as plt
+from ib_insync import IB, Stock, util
 
 class IBStockAnalyzer(IBClientLive):
     """
@@ -20,13 +22,18 @@ class IBStockAnalyzer(IBClientLive):
     """
 
     def __init__(self, tickers: List[str], ref_tickers: List[str], bar_size: str,
-                 account='DU8057891', host='127.0.0.1', port=7497, client_id=999):
+                 account='DU8057891', host='127.0.0.1', port=7497, client_id=999, get_tickers_from_positions=False):
         super().__init__(account=account, host=host, port=port, client_id=client_id)
         self.tickers = tickers
         self.ref_tickers = ref_tickers
         self.bar_size = bar_size
         self.data: Dict[str, pd.DataFrame] = {}  # Cache for intraday data
         self.connect()
+
+        if get_tickers_from_positions:
+            self.get_tickers_from_positions()
+
+
 
     def fetch_intraday_in_chunks(self, ticker: str, start: pd.Timestamp,
                                  end: pd.Timestamp, bar_size: str = None,
@@ -108,6 +115,7 @@ class IBStockAnalyzer(IBClientLive):
         end_ts = pd.Timestamp(period_end)
 
         # Fetch data for all tickers and reference tickers.
+
         all_tickers = list(set(self.tickers + self.ref_tickers))
         for ticker in all_tickers:
             data = self.fetch_intraday_in_chunks(
@@ -118,6 +126,26 @@ class IBStockAnalyzer(IBClientLive):
                 chunk_size_request=chunk_size_request
             )
             self.data[ticker] = data
+
+    def get_tickers_from_positions(self) -> None:
+        """
+        Fetches the current positions from IB and updates self.tickers with any tickers found
+        that are not already in the list.
+        """
+        positions = self.ib.positions()  # returns list of (account, contract, pos, avgCost)
+        pos_tickers = []
+        for account, contract, pos, avgCost in positions:
+            symbol = contract.symbol
+            pos_tickers.append(symbol)
+            print(f"[get_tickers_from_positions] {symbol}: pos={pos}, avgCost={avgCost}")
+
+        # Add position tickers to self.tickers if they are not already present.
+        for ticker in pos_tickers:
+            if ticker not in self.tickers:
+                self.tickers.append(ticker)
+
+        self.tickers = list((set(self.tickers)))
+
 
     def analyze_betas(self, period_start: dt.datetime, period_end: dt.datetime,
                       frequency: str = None) -> pd.DataFrame:
@@ -212,15 +240,16 @@ class IBStockAnalyzer(IBClientLive):
         returns_df = pd.DataFrame(returns_dict)
 
         corr_matrix = returns_df.corr()
+        corr_matrix = np.round(corr_matrix, decimals=2)
 
         return corr_matrix
 
 
 tickers = ['QQQ','TSLA', 'SBUX', 'NBIS', 'OKLO' , 'MSTR', 'VXX']
-reference = ['QQQ','SPY',]
+reference = ['QQQ','SPY']
 period_start = dt.datetime(2025, 1, 1)
-period_end = dt.datetime(2025, 3, 13)
-anal = IBStockAnalyzer(tickers,reference, '30 mins', client_id=26)
+period_end = dt.datetime(2025, 3, 18)
+anal = IBStockAnalyzer(tickers,reference, '1 hour', client_id=26, get_tickers_from_positions=True )
 
 betas = anal.analyze_betas(period_start=period_start, period_end=period_end)
 corr = anal.analyze_correlations(period_start=period_start, period_end=period_end)
