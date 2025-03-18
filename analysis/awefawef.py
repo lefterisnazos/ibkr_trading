@@ -13,5 +13,5 @@ ib = IBClientLive(account='DU8057891', client_id=30)
 ib.connect()
 start = dt.datetime(2025, 3, 1)
 end = dt.datetime(2025, 3, 17)
-data = ib.fetch_historical_data('BA.', start, end, bar_size='1 hour')
+data = ib.fetch_historical_data('THEON', start, end, bar_size='1 hour')
 x=2

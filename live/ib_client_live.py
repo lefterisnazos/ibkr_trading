@@ -209,10 +209,8 @@ class IBClientLive:
             print(f"Could not find a valid contract for {symbol}.")
             return pd.DataFrame()
 
-        # Determine the correct time zone suffix for this exchange
         tz_suffix = self.get_exchange_timezone(contract.exchange)
         if tz_suffix == 'US/Eastern':
-            # e.g. '20250313 23:59:59 Europe/London'
             end_date_str = end_date.strftime("%Y%m%d %H:%M:%S") + 'US/Eastern'
         else:
             end_date_str = end_date.strftime("%Y%m%d %H:%M:%S")
