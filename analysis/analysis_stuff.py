@@ -1,3 +1,5 @@
+import pickle
+import os
 from live.ib_client_live import IBClientLive
 import time
 import datetime as dt
@@ -22,18 +24,54 @@ class IBStockAnalyzer(IBClientLive):
     """
 
     def __init__(self, tickers: List[str], ref_tickers: List[str], bar_size: str,
-                 account='DU8057891', host='127.0.0.1', port=7497, client_id=999, get_positions=False):
+                 account='DU8057891', host='127.0.0.1', port=7497, client_id=999,
+                 get_positions: bool = False, pickle_up: bool = False, pickle_filename: str = 'data.pkl'):
         super().__init__(account=account, host=host, port=port, client_id=client_id)
         self.tickers = tickers
         self.ref_tickers = ref_tickers
         self.bar_size = bar_size
         self.data: Dict[str, pd.DataFrame] = {}  # Cache for intraday data
         self.connect()
-
         self.allocation_weights = None
+
         if get_positions:
             self.get_tickers_from_positions()
 
+        # If pickle_up is True, try to load cached data
+        self.pickle_filename = pickle_filename
+        if pickle_up:
+            self.load_data(self.pickle_filename)
+
+    def save_data(self, filename: str = None) -> None:
+        """
+        Pickles and saves self.data to disk so that it can be loaded in subsequent sessions.
+        """
+        if filename is None:
+            filename = self.pickle_filename
+        try:
+            with open(filename, 'wb') as f:
+                pickle.dump(self.data, f)
+            print(f"Data successfully saved to {filename}.")
+        except Exception as e:
+            print(f"Error saving data to {filename}: {e}")
+
+    def load_data(self, filename: str = None) -> None:
+        """
+        Loads self.data from a pickle file on disk. If the file is not found, self.data remains empty.
+        """
+        if filename is None:
+            filename = self.pickle_filename
+        if os.path.exists(filename):
+            try:
+                with open(filename, 'rb') as f:
+                    self.data = pickle.load(f)
+                print(f"Data successfully loaded from {filename}.")
+            except Exception as e:
+                print(f"Error loading data from {filename}: {e}")
+                self.data = {}
+        else:
+            print(f"No pickle file found at {filename}. Starting with empty data.")
+            self.data = {}
 
 
     def fetch_intraday_in_chunks(self, ticker: str, start: pd.Timestamp,
@@ -127,6 +165,8 @@ class IBStockAnalyzer(IBClientLive):
                 chunk_size_request=chunk_size_request
             )
             self.data[ticker] = data
+
+        return
 
     def get_tickers_from_positions(self) -> None:
         """
@@ -263,13 +303,13 @@ class IBStockAnalyzer(IBClientLive):
 
         return corr_matrix
 
-    def compute_ticker_portfolio_correlation(self, weighted: bool = False, allocations: Optional[Dict[str, float]] = None) -> pd.Series:
+    def compute_ticker_portfolio_correlation(self, weighted: bool = True) -> pd.Series:
         """
         For each ticker in self.tickers, compute the correlation between its returns and the returns
         of the portfolio formed by all the other tickers in self.tickers.
 
-        If weighted is True, the portfolio returns are computed using the provided allocation weights
-        (normalized to sum to 1 over the other tickers). If allocations is None, equal weights are used.
+        If weighted is True, the portfolio returns are computed using the allocation weights stored in
+        self.allocation_weights (if available); otherwise, equal weights are used.
 
         Returns:
             pd.Series: A series where the index is ticker and the value is the correlation (float).
@@ -310,19 +350,15 @@ class IBStockAnalyzer(IBClientLive):
 
             # Compute portfolio returns as a weighted sum or simple average of the other tickers
             if weighted:
-                # If allocations provided, use them for the tickers in df_other;
-                # otherwise, assume equal weighting
-                alloc = {}
-                for ot in df_other.columns:
-                    if allocations and ot in allocations:
-                        alloc[ot] = allocations[ot]
-                    else:
-                        alloc[ot] = 1.0
-                # Normalize weights to sum to 1
+                # Use self.allocation_weights if available; otherwise, default to equal weighting
+                if self.allocation_weights:
+                    alloc = {ot: self.allocation_weights.get(ot, 1.0) for ot in df_other.columns}
+                else:
+                    alloc = {ot: 1.0 for ot in df_other.columns}
+
                 total = sum(alloc.values())
                 for ot in alloc:
                     alloc[ot] /= total
-                # Compute weighted portfolio return for each date
                 port_return = df_other.mul(pd.Series(alloc)).sum(axis=1)
             else:
                 port_return = df_other.mean(axis=1)
@@ -337,17 +373,14 @@ class IBStockAnalyzer(IBClientLive):
 
         return pd.Series(correlations)
 
-    def compute_portfolio_benchmark_correlation(self,
-                                                weighted: bool = False,
-                                                allocations: Optional[Dict[str, float]] = None
-                                                ) -> pd.Series:
+    def compute_portfolio_benchmark_correlation(self, weighted: bool = True) -> pd.Series:
         """
         Computes the correlation between the entire portfolio (self.tickers) and each benchmark
         in self.ref_tickers. The portfolio return is computed as a weighted (if weighted=True) or
         equal-weighted average of the returns of self.tickers.
 
-        For weighted calculations, if an allocations dictionary is provided the values are normalized
-        to sum to 1; otherwise, equal weights are assumed.
+        When weighted is True, the allocation weights stored in self.allocation_weights are used.
+        If self.allocation_weights is not defined, equal weights are assumed.
 
         Returns:
             pd.Series: A series with each benchmark ticker (from self.ref_tickers) as index and
@@ -374,12 +407,11 @@ class IBStockAnalyzer(IBClientLive):
 
         # Compute portfolio return: weighted sum or equal average
         if weighted:
-            alloc = {}
-            for ticker in df_port.columns:
-                if allocations and ticker in allocations:
-                    alloc[ticker] = allocations[ticker]
-                else:
-                    alloc[ticker] = 1.0
+            if self.allocation_weights:
+                alloc = {ticker: self.allocation_weights.get(ticker, 1.0) for ticker in df_port.columns}
+            else:
+                alloc = {ticker: 1.0 for ticker in df_port.columns}
+
             total = sum(alloc.values())
             for ticker in alloc:
                 alloc[ticker] /= total
@@ -387,7 +419,7 @@ class IBStockAnalyzer(IBClientLive):
         else:
             port_return = df_port.mean(axis=1)
 
-        # For each benchmark ticker, compute its return series
+        # For each benchmark ticker, compute its return series and then correlation
         benchmark_corr = {}
         for bench in self.ref_tickers:
             if bench in self.data:
@@ -397,7 +429,6 @@ class IBStockAnalyzer(IBClientLive):
                 benchmark_corr[bench] = np.nan
                 continue
 
-            # Align with portfolio return series
             common_index = port_return.index.intersection(bench_returns.index)
             if common_index.empty:
                 benchmark_corr[bench] = np.nan
@@ -408,7 +439,7 @@ class IBStockAnalyzer(IBClientLive):
         return pd.Series(benchmark_corr)
 
 
-tickers = ['QQQ','TSLA', 'SBUX', 'NBIS', 'OKLO' , 'MSTR', 'VXX']
+tickers = ['QQQ','TSLA', 'SBUX', 'NBIS']
 reference = ['QQQ','SPY']
 period_start = dt.datetime(2025, 1, 1)
 period_end = dt.datetime(2025, 3, 18)
@@ -416,5 +447,6 @@ anal = IBStockAnalyzer(tickers,reference, '1 hour', client_id=26, get_positions=
 
 betas = anal.analyze_betas(period_start=period_start, period_end=period_end)
 corr = anal.analyze_correlations(period_start=period_start, period_end=period_end)
-port_corr = anal.compute_ticker_portfolio_correlation()
+port_corr = anal.compute_ticker_portfolio_correlation(weighted=True)
+bench_corr = anal.compute_portfolio_benchmark_correlation(weighted=True)
 x=2

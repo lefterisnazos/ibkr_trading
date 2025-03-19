@@ -211,7 +211,7 @@ class IBClientLive:
 
         tz_suffix = self.get_exchange_timezone(contract.exchange)
         if tz_suffix == 'US/Eastern':
-            end_date_str = end_date.strftime("%Y%m%d %H:%M:%S") + 'US/Eastern'
+            end_date_str = end_date.strftime("%Y%m%d %H:%M:%S") + ' US/Eastern'
         else:
             end_date_str = end_date.strftime("%Y%m%d %H:%M:%S")
 
@@ -359,16 +359,15 @@ class IBClientLive:
         exchange_tz_map = {
             'SMART': 'US/Eastern',
             'NYSE': 'US/Eastern',
-            'AMEX': 'US/Eastern',
             'NASDAQ': 'US/Eastern',
-            'AEB': 'Amsterdam',
-            'SBF': 'Paris',
-            'IBIS': 'Frankfurt',
-            'BVME': 'Milan',
-            'LSE': 'London',
-            'SEHK': 'HongKong',
-            'TSE': 'Tokyo',
-            'ATH': 'Athens',
+            'AEB': 'Europe/Amsterdam',
+            'SBF': 'Europe/Paris',
+            'IBIS': 'Europe/Berlin',
+            'BVME': 'Europe/Rome',
+            'LSE': 'Europe/London',
+            'SEHK': 'Asia/Hong_Kong',
+            'TSE': 'Asia/Tokyo',
+            'ATH': 'Europe/Athens',
         }
         return exchange_tz_map.get(exchange, '')
 
