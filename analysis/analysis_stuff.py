@@ -263,10 +263,7 @@ class IBStockAnalyzer(IBClientLive):
 
         return corr_matrix
 
-    def compute_ticker_portfolio_correlation(self,
-                                             weighted: bool = False,
-                                             allocations: Optional[Dict[str, float]] = None
-                                             ) -> pd.Series:
+    def compute_ticker_portfolio_correlation(self, weighted: bool = False, allocations: Optional[Dict[str, float]] = None) -> pd.Series:
         """
         For each ticker in self.tickers, compute the correlation between its returns and the returns
         of the portfolio formed by all the other tickers in self.tickers.
@@ -415,8 +412,9 @@ tickers = ['QQQ','TSLA', 'SBUX', 'NBIS', 'OKLO' , 'MSTR', 'VXX']
 reference = ['QQQ','SPY']
 period_start = dt.datetime(2025, 1, 1)
 period_end = dt.datetime(2025, 3, 18)
-anal = IBStockAnalyzer(tickers,reference, '1 hour', client_id=26, get_tickers_from_positions=True )
+anal = IBStockAnalyzer(tickers,reference, '1 hour', client_id=26, get_positions=True )
 
 betas = anal.analyze_betas(period_start=period_start, period_end=period_end)
 corr = anal.analyze_correlations(period_start=period_start, period_end=period_end)
+port_corr = anal.compute_ticker_portfolio_correlation()
 x=2
