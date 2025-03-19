@@ -22,7 +22,7 @@ class IBStockAnalyzer(IBClientLive):
     """
 
     def __init__(self, tickers: List[str], ref_tickers: List[str], bar_size: str,
-                 account='DU8057891', host='127.0.0.1', port=7497, client_id=999, get_tickers_from_positions=False):
+                 account='DU8057891', host='127.0.0.1', port=7497, client_id=999, get_positions=False):
         super().__init__(account=account, host=host, port=port, client_id=client_id)
         self.tickers = tickers
         self.ref_tickers = ref_tickers
@@ -30,7 +30,8 @@ class IBStockAnalyzer(IBClientLive):
         self.data: Dict[str, pd.DataFrame] = {}  # Cache for intraday data
         self.connect()
 
-        if get_tickers_from_positions:
+        self.allocation_weights = None
+        if get_positions:
             self.get_tickers_from_positions()
 
 
@@ -129,20 +130,38 @@ class IBStockAnalyzer(IBClientLive):
 
     def get_tickers_from_positions(self) -> None:
         """
-        Fetches the current positions from IB and updates self.tickers with any tickers found
-        that are not already in the list.
-        """
+            Fetches the current positions from IB, calculates allocation weights based on
+            the market value (absolute position size multiplied by average cost) of each position,
+            normalizes these weights so they sum to 1, stores them in self.allocations, and updates
+            self.tickers with any tickers found that are not already in the list.
+            """
         positions = self.ib.positions()  # returns list of (account, contract, pos, avgCost)
-        pos_tickers = []
+        allocations = {}
+        total_value = 0.0
+
         for account, contract, pos, avgCost in positions:
             symbol = contract.symbol
-            pos_tickers.append(symbol)
-            print(f"[get_tickers_from_positions] {symbol}: pos={pos}, avgCost={avgCost}")
+            # Compute market value; use abs(pos) to handle shorts
+            value = abs(pos) * avgCost
+            total_value += value
+            allocations[symbol] = value
+            print(f"[get_tickers_from_positions] {symbol}: pos={pos}, avgCost={avgCost}, value={value}")
 
-        # Add position tickers to self.tickers if they are not already present.
-        for ticker in pos_tickers:
-            if ticker not in self.tickers:
-                self.tickers.append(ticker)
+        # Normalize allocation weights (if total_value is > 0)
+        if total_value > 0:
+            for symbol in allocations:
+                allocations[symbol] /= total_value
+        else:
+            for symbol in allocations:
+                allocations[symbol] = 0.0
+
+        # Store the normalized weights in self.allocations.
+        self.allocation_weights = allocations
+
+        # Update self.tickers with any tickers from positions not already in the list.
+        for symbol in allocations.keys():
+            if symbol not in self.tickers:
+                self.tickers.append(symbol)
 
         self.tickers = list((set(self.tickers)))
 
@@ -243,6 +262,153 @@ class IBStockAnalyzer(IBClientLive):
         corr_matrix = np.round(corr_matrix, decimals=2)
 
         return corr_matrix
+
+    def compute_ticker_portfolio_correlation(self,
+                                             weighted: bool = False,
+                                             allocations: Optional[Dict[str, float]] = None
+                                             ) -> pd.Series:
+        """
+        For each ticker in self.tickers, compute the correlation between its returns and the returns
+        of the portfolio formed by all the other tickers in self.tickers.
+
+        If weighted is True, the portfolio returns are computed using the provided allocation weights
+        (normalized to sum to 1 over the other tickers). If allocations is None, equal weights are used.
+
+        Returns:
+            pd.Series: A series where the index is ticker and the value is the correlation (float).
+        """
+        correlations = {}
+
+        # Loop over each ticker in the portfolio
+        for ticker in self.tickers:
+            # Define "other tickers" (exclude the ticker under consideration)
+            other_tickers = [t for t in self.tickers if t != ticker]
+
+            # Get returns series for the ticker
+            try:
+                ts = self.data[ticker]['Close'].pct_change().dropna()
+            except KeyError:
+                print(f"Data for {ticker} is missing.")
+                correlations[ticker] = np.nan
+                continue
+
+            # Build a DataFrame with returns for all other tickers
+            other_returns = {}
+            for ot in other_tickers:
+                if ot in self.data:
+                    r = self.data[ot]['Close'].pct_change().dropna()
+                    other_returns[ot] = r
+                else:
+                    print(f"Data for {ot} is missing.")
+
+            if not other_returns:
+                correlations[ticker] = np.nan
+                continue
+
+            # Align the returns series by taking the intersection of their indices
+            df_other = pd.concat(other_returns, axis=1, join='inner')
+            if df_other.empty:
+                correlations[ticker] = np.nan
+                continue
+
+            # Compute portfolio returns as a weighted sum or simple average of the other tickers
+            if weighted:
+                # If allocations provided, use them for the tickers in df_other;
+                # otherwise, assume equal weighting
+                alloc = {}
+                for ot in df_other.columns:
+                    if allocations and ot in allocations:
+                        alloc[ot] = allocations[ot]
+                    else:
+                        alloc[ot] = 1.0
+                # Normalize weights to sum to 1
+                total = sum(alloc.values())
+                for ot in alloc:
+                    alloc[ot] /= total
+                # Compute weighted portfolio return for each date
+                port_return = df_other.mul(pd.Series(alloc)).sum(axis=1)
+            else:
+                port_return = df_other.mean(axis=1)
+
+            # Align the ticker returns with the portfolio returns
+            common_index = ts.index.intersection(port_return.index)
+            if common_index.empty:
+                correlations[ticker] = np.nan
+            else:
+                corr = ts.loc[common_index].corr(port_return.loc[common_index])
+                correlations[ticker] = corr
+
+        return pd.Series(correlations)
+
+    def compute_portfolio_benchmark_correlation(self,
+                                                weighted: bool = False,
+                                                allocations: Optional[Dict[str, float]] = None
+                                                ) -> pd.Series:
+        """
+        Computes the correlation between the entire portfolio (self.tickers) and each benchmark
+        in self.ref_tickers. The portfolio return is computed as a weighted (if weighted=True) or
+        equal-weighted average of the returns of self.tickers.
+
+        For weighted calculations, if an allocations dictionary is provided the values are normalized
+        to sum to 1; otherwise, equal weights are assumed.
+
+        Returns:
+            pd.Series: A series with each benchmark ticker (from self.ref_tickers) as index and
+                       its correlation (float) with the portfolio returns.
+        """
+        # Gather returns for each portfolio ticker
+        port_returns_dict = {}
+        for ticker in self.tickers:
+            if ticker in self.data:
+                r = self.data[ticker]['Close'].pct_change().dropna()
+                port_returns_dict[ticker] = r
+            else:
+                print(f"Data for portfolio ticker {ticker} is missing.")
+
+        if not port_returns_dict:
+            print("No portfolio returns data available.")
+            return pd.Series(dtype=float)
+
+        # Align all portfolio returns on common dates
+        df_port = pd.concat(port_returns_dict, axis=1, join='inner')
+        if df_port.empty:
+            print("No common dates across portfolio tickers.")
+            return pd.Series(dtype=float)
+
+        # Compute portfolio return: weighted sum or equal average
+        if weighted:
+            alloc = {}
+            for ticker in df_port.columns:
+                if allocations and ticker in allocations:
+                    alloc[ticker] = allocations[ticker]
+                else:
+                    alloc[ticker] = 1.0
+            total = sum(alloc.values())
+            for ticker in alloc:
+                alloc[ticker] /= total
+            port_return = df_port.mul(pd.Series(alloc)).sum(axis=1)
+        else:
+            port_return = df_port.mean(axis=1)
+
+        # For each benchmark ticker, compute its return series
+        benchmark_corr = {}
+        for bench in self.ref_tickers:
+            if bench in self.data:
+                bench_returns = self.data[bench]['Close'].pct_change().dropna()
+            else:
+                print(f"Data for benchmark {bench} is missing.")
+                benchmark_corr[bench] = np.nan
+                continue
+
+            # Align with portfolio return series
+            common_index = port_return.index.intersection(bench_returns.index)
+            if common_index.empty:
+                benchmark_corr[bench] = np.nan
+            else:
+                corr = port_return.loc[common_index].corr(bench_returns.loc[common_index])
+                benchmark_corr[bench] = corr
+
+        return pd.Series(benchmark_corr)
 
 
 tickers = ['QQQ','TSLA', 'SBUX', 'NBIS', 'OKLO' , 'MSTR', 'VXX']
