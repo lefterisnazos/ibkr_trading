@@ -373,70 +373,96 @@ class IBStockAnalyzer(IBClientLive):
 
         return pd.Series(correlations)
 
-    def compute_portfolio_benchmark_correlation(self, weighted: bool = True) -> pd.Series:
+    def compute_portfolio_benchmark_correlation(self, weighted: bool = False) -> pd.DataFrame:
         """
-        Computes the correlation between the entire portfolio (self.tickers) and each benchmark
-        in self.ref_tickers. The portfolio return is computed as a weighted (if weighted=True) or
-        equal-weighted average of the returns of self.tickers.
+        Computes the correlation of each individual ticker (from self.tickers) against each benchmark
+        (from self.ref_tickers), and then also computes the correlation of the overall portfolio
+        with each benchmark. The portfolio return is computed as a weighted average (using self.allocation_weights
+        if weighted=True) or a simple average otherwise.
 
-        When weighted is True, the allocation weights stored in self.allocation_weights are used.
-        If self.allocation_weights is not defined, equal weights are assumed.
+        The returned DataFrame has tickers (and an extra row labeled 'Portfolio') as its index, and benchmarks as its columns.
+
+        Args:
+            weighted (bool): If True, use self.allocation_weights (if available) to compute weighted portfolio returns.
+                             If False, compute returns with equal weighting.
 
         Returns:
-            pd.Series: A series with each benchmark ticker (from self.ref_tickers) as index and
-                       its correlation (float) with the portfolio returns.
+            pd.DataFrame: A DataFrame where rows are each ticker (plus 'Portfolio') and columns are benchmarks,
+                          with each cell showing the correlation of returns.
         """
-        # Gather returns for each portfolio ticker
+        import numpy as np
+        correlations = {}
+
+        # First, compute correlation for each individual ticker against each benchmark.
+        for ticker in self.tickers:
+            ticker_corr = {}
+            if ticker not in self.data or self.data[ticker].empty:
+                for bench in self.ref_tickers:
+                    ticker_corr[bench] = np.nan
+                correlations[ticker] = ticker_corr
+                continue
+
+            ticker_returns = self.data[ticker]['Close'].pct_change().dropna()
+            for bench in self.ref_tickers:
+                if bench not in self.data or self.data[bench].empty:
+                    ticker_corr[bench] = np.nan
+                else:
+                    bench_returns = self.data[bench]['Close'].pct_change().dropna()
+                    common_index = ticker_returns.index.intersection(bench_returns.index)
+                    if common_index.empty:
+                        ticker_corr[bench] = np.nan
+                    else:
+                        ticker_corr[bench] = ticker_returns.loc[common_index].corr(bench_returns.loc[common_index])
+            correlations[ticker] = ticker_corr
+
+        # Next, compute the overall portfolio return.
         port_returns_dict = {}
         for ticker in self.tickers:
-            if ticker in self.data:
+            if ticker in self.data and not self.data[ticker].empty:
                 r = self.data[ticker]['Close'].pct_change().dropna()
                 port_returns_dict[ticker] = r
             else:
                 print(f"Data for portfolio ticker {ticker} is missing.")
 
-        if not port_returns_dict:
-            print("No portfolio returns data available.")
-            return pd.Series(dtype=float)
-
-        # Align all portfolio returns on common dates
-        df_port = pd.concat(port_returns_dict, axis=1, join='inner')
-        if df_port.empty:
-            print("No common dates across portfolio tickers.")
-            return pd.Series(dtype=float)
-
-        # Compute portfolio return: weighted sum or equal average
-        if weighted:
-            if self.allocation_weights:
-                alloc = {ticker: self.allocation_weights.get(ticker, 1.0) for ticker in df_port.columns}
+        if port_returns_dict:
+            df_port = pd.concat(port_returns_dict, axis=1, join='inner')
+            if df_port.empty:
+                portfolio_return = pd.Series(dtype=float)
             else:
-                alloc = {ticker: 1.0 for ticker in df_port.columns}
-
-            total = sum(alloc.values())
-            for ticker in alloc:
-                alloc[ticker] /= total
-            port_return = df_port.mul(pd.Series(alloc)).sum(axis=1)
+                if weighted:
+                    if self.allocation_weights:
+                        # Use allocation weights from self.allocation_weights for tickers in df_port.
+                        alloc = {ticker: self.allocation_weights.get(ticker, 1.0) for ticker in df_port.columns}
+                    else:
+                        alloc = {ticker: 1.0 for ticker in df_port.columns}
+                    total = sum(alloc.values())
+                    for ticker in alloc:
+                        alloc[ticker] /= total
+                    portfolio_return = df_port.mul(pd.Series(alloc)).sum(axis=1)
+                else:
+                    portfolio_return = df_port.mean(axis=1)
         else:
-            port_return = df_port.mean(axis=1)
+            portfolio_return = pd.Series(dtype=float)
 
-        # For each benchmark ticker, compute its return series and then correlation
-        benchmark_corr = {}
+        # Compute correlations for the overall portfolio.
+        portfolio_corr = {}
+
         for bench in self.ref_tickers:
-            if bench in self.data:
+            if bench not in self.data or self.data[bench].empty:
+                portfolio_corr[bench] = np.nan
+            else:
                 bench_returns = self.data[bench]['Close'].pct_change().dropna()
-            else:
-                print(f"Data for benchmark {bench} is missing.")
-                benchmark_corr[bench] = np.nan
-                continue
+                common_index = portfolio_return.index.intersection(bench_returns.index)
+                if common_index.empty:
+                    portfolio_corr[bench] = np.nan
+                else:
+                    portfolio_corr[bench] = portfolio_return.loc[common_index].corr(bench_returns.loc[common_index])
+        correlations['Portfolio'] = portfolio_corr
 
-            common_index = port_return.index.intersection(bench_returns.index)
-            if common_index.empty:
-                benchmark_corr[bench] = np.nan
-            else:
-                corr = port_return.loc[common_index].corr(bench_returns.loc[common_index])
-                benchmark_corr[bench] = corr
-
-        return pd.Series(benchmark_corr)
+        # Convert the correlations dictionary to a DataFrame.
+        corr_df = pd.DataFrame(correlations).T
+        corr_df = corr_df.reindex(sorted(corr_df.index, key=lambda x: (x != 'Portfolio', x)))
+        return corr_df
 
 
 tickers = ['QQQ','TSLA', 'SBUX', 'NBIS']
