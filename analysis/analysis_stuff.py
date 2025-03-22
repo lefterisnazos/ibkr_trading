@@ -32,10 +32,15 @@ class IBStockAnalyzer(IBClientLive):
         self.bar_size = bar_size
         self.data: Dict[str, pd.DataFrame] = {}  # Cache for intraday data
         self.connect()
+
         self.allocation_weights = None
+        self.get_positions = False
+        self.portfolio_summary = {}
 
         if get_positions:
-            self.get_tickers_from_positions()
+            self.get_positions = True
+            self.get_info_from_positions()
+
 
         # If pickle_up is True, try to load cached data
         self.pickle_filename = pickle_filename
@@ -168,43 +173,52 @@ class IBStockAnalyzer(IBClientLive):
 
         return
 
-    def get_tickers_from_positions(self) -> None:
+    def get_info_from_positions(self) -> None:
         """
-            Fetches the current positions from IB, calculates allocation weights based on
-            the market value (absolute position size multiplied by average cost) of each position,
-            normalizes these weights so they sum to 1, stores them in self.allocations, and updates
-            self.tickers with any tickers found that are not already in the list.
-            """
-        positions = self.ib.positions()  # returns list of (account, contract, pos, avgCost)
-        allocations = {}
-        total_value = 0.0
+        Fetches the current positions from IB, calculates each position's fraction
+        of the account's Net Liquidation Value, stores them in self.allocation_weights,
+        and updates self.tickers with any tickers not already in the list.
+        """
 
-        for account, contract, pos, avgCost in positions:
-            symbol = contract.symbol
-            # Compute market value; use abs(pos) to handle shorts
-            value = abs(pos) * avgCost
-            total_value += value
-            allocations[symbol] = value
-            print(f"[get_tickers_from_positions] {symbol}: pos={pos}, avgCost={avgCost}, value={value}")
+        # 1) Get the Net Liquidation Value
+        net_liq_value = 0.0
+        summary = self.ib.accountSummary(account=self.account)
+        net_liq_value = float(next(val for val in summary if val.tag == 'NetLiquidation').value)
+        total_cash = float(next(val for val in summary if val.tag == 'TotalCashValue').value)
+        gross_position_value = float(next(val for val in summary if val.tag == 'GrossPositionValue').value)
 
-        # Normalize allocation weights (if total_value is > 0)
-        if total_value > 0:
-            for symbol in allocations:
-                allocations[symbol] /= total_value
-        else:
-            for symbol in allocations:
-                allocations[symbol] = 0.0
+        self.portfolio_summary = {'net_liquidation': net_liq_value,
+                                'total_cash': total_cash,
+                                'gross_position_value': gross_position_value}
 
-        # Store the normalized weights in self.allocations.
-        self.allocation_weights = allocations
+        # Safety check to avoid dividing by zero
+        if net_liq_value <= 0:
+            print("Warning: NetLiquidation value is zero or unavailable. Defaulting to 1.0.")
+            net_liq_value = 1.0
 
-        # Update self.tickers with any tickers from positions not already in the list.
-        for symbol in allocations.keys():
-            if symbol not in self.tickers:
-                self.tickers.append(symbol)
+        # 2) Fetch positions
+        portfolio = self.ib.portfolio()  # list of (account, contract, pos, avgCost)
+        # Prepare a dictionary for allocation weights and a set for unique tickers
+        allocation_weights = {}
+        tickers_set = set()
 
-        self.tickers = list((set(self.tickers)))
+        for pos in portfolio:
+            symbol = pos.contract.symbol
+            tickers_set.add(symbol)  # collect unique symbols
 
+            # Calculate weight as position market value divided by NetLiquidation
+            # (avoid division by zero if net_liq_value is 0.0)
+            if net_liq_value:
+                allocation_weights[symbol] = pos.marketValue / net_liq_value
+            else:
+                allocation_weights[symbol] = 0.0
+
+        # Update the object's attributes
+        self.tickers = list(tickers_set)
+        self.allocation_weights = allocation_weights
+
+        # Remove duplicates, if any
+        self.tickers = list(set(self.tickers))
 
     def analyze_betas(self, period_start: dt.datetime, period_end: dt.datetime,
                       frequency: str = None) -> pd.DataFrame:
@@ -373,16 +387,17 @@ class IBStockAnalyzer(IBClientLive):
 
         return pd.Series(correlations)
 
-    def compute_portfolio_benchmark_correlation(self, weighted: bool = False) -> pd.DataFrame:
+    def compute_correlation_against_benchmarks(self, weighted: bool = False) -> pd.DataFrame:
         """
         Computes the correlation of each individual ticker (from self.tickers) against each benchmark
-        (from self.ref_tickers), and then also computes the correlation of the overall portfolio
+        (from self.ref_tickers), and then also computes the correlation of the overall portfolio/tickers
         with each benchmark. The portfolio return is computed as a weighted average (using self.allocation_weights
         if weighted=True) or a simple average otherwise.
 
         The returned DataFrame has tickers (and an extra row labeled 'Portfolio') as its index, and benchmarks as its columns.
 
         Args:
+            weighted parameter is relevant only for 'Portfolio'.
             weighted (bool): If True, use self.allocation_weights (if available) to compute weighted portfolio returns.
                              If False, compute returns with equal weighting.
 
@@ -392,6 +407,7 @@ class IBStockAnalyzer(IBClientLive):
         """
         import numpy as np
         correlations = {}
+
 
         # First, compute correlation for each individual ticker against each benchmark.
         for ticker in self.tickers:
@@ -467,12 +483,12 @@ class IBStockAnalyzer(IBClientLive):
 
 tickers = ['QQQ','TSLA', 'SBUX', 'NBIS']
 reference = ['QQQ','SPY']
-period_start = dt.datetime(2025, 1, 1)
-period_end = dt.datetime(2025, 3, 18)
-anal = IBStockAnalyzer(tickers,reference, '1 hour', client_id=26, get_positions=True )
+period_start = dt.datetime(2025, 2, 1)
+period_end = dt.datetime(2025, 3, 20)
+anal = IBStockAnalyzer(tickers,reference, '1 day', client_id=26, get_positions=True)
 
 betas = anal.analyze_betas(period_start=period_start, period_end=period_end)
 corr = anal.analyze_correlations(period_start=period_start, period_end=period_end)
 port_corr = anal.compute_ticker_portfolio_correlation(weighted=True)
-bench_corr = anal.compute_portfolio_benchmark_correlation(weighted=True)
+bench_corr = anal.compute_correlation_against_benchmarks(weighted=True)
 x=2
