@@ -257,8 +257,7 @@ class IBStockAnalyzer(IBClientLive):
             net_liq_value = 1.0
 
         # 2) Fetch positions
-        portfolio = self.ib.portfolio()  # list of (account, contract, pos, avgCost)
-        # Prepare a dictionary for allocation weights and a set for unique tickers
+        portfolio = self.ib.portfolio()  # list of (account, contract, pos, avgCost)   # Prepare a dictionary for allocation weights and a set for unique tickers
         allocation_weights = {}
         tickers_set = set()
 
