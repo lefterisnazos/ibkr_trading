@@ -11,6 +11,9 @@ from tqdm import tqdm
 from ib_insync import Index
 import matplotlib.pyplot as plt
 from ib_insync import IB, Stock, util
+from ib_insync import Forex, Ticker
+import time
+
 
 class IBStockAnalyzer(IBClientLive):
     """
@@ -77,6 +80,54 @@ class IBStockAnalyzer(IBClientLive):
         else:
             print(f"No pickle file found at {filename}. Starting with empty data.")
             self.data = {}
+
+    def get_fx_rate(self, from_ccy: str, to_ccy: str, timeout: float = 0.5) -> float:
+        """
+        Retrieve the exchange rate from_ccy -> to_ccy using ib_insync.
+        If direct pair is unavailable, tries reversed pair and inverts the rate.
+        E.g., if from_ccy='USD' and to_ccy='EUR', it will first try 'USDEUR'.
+        If no data, it tries 'EURUSD' and then returns 1/rate.
+
+        :param from_ccy: e.g. 'EUR', 'USD', 'GBP', etc.
+        :param to_ccy:   e.g. 'EUR', 'USD', 'GBP', etc.
+        :param timeout:  seconds to wait for IB to populate snapshot data.
+        :return:         exchange rate as float (if no data, returns 1.0 as fallback).
+        """
+
+        if from_ccy == to_ccy:
+            return 1.0
+
+        # A small helper to build a contract for e.g. 'EURUSD'
+        def forex_contract(base, quote):
+            c = Forex(base + quote)
+            c.exchange = 'IDEALPRO'  # IB's main FX ECN
+            return c
+
+        # 1) Try direct pair
+        direct_pair = from_ccy + to_ccy
+        direct_contract = forex_contract(from_ccy, to_ccy)
+        direct_ticker = self.ib.reqMktData(direct_contract, '', snapshot=True)
+
+        # Wait a bit for IB to send data
+        self.ib.sleep(timeout)
+
+        direct_rate = direct_ticker.close
+        if direct_rate and direct_rate > 0.0:
+            return direct_rate
+
+        # 2) If direct pair fails, try reversed pair and invert
+        rev_contract = forex_contract(to_ccy, from_ccy)
+        rev_ticker = self.ib.reqMktData(rev_contract, '', snapshot=True)
+
+        self.ib.sleep(timeout)
+
+        rev_rate = rev_ticker.close
+        if rev_rate and rev_rate > 0.0:
+            return 1.0 / rev_rate
+
+        # 3) Fallback
+        print(f"[WARN] Could not get an FX rate for {from_ccy}->{to_ccy} from IB. Defaulting to 1.0")
+        return 1.0
 
 
     def fetch_intraday_in_chunks(self, ticker: str, start: pd.Timestamp,
@@ -202,22 +253,26 @@ class IBStockAnalyzer(IBClientLive):
         allocation_weights = {}
         tickers_set = set()
 
-        for pos in portfolio:
-            symbol = pos.contract.symbol
-            tickers_set.add(symbol)  # collect unique symbols
+        for pos_item in portfolio:
+            symbol = pos_item.contract.symbol
+            ccy = pos_item.contract.currency  # e.g. 'USD', 'EUR'
+            market_val_local = pos_item.marketValue  # in ccy
 
-            # Calculate weight as position market value divided by NetLiquidation
-            # (avoid division by zero if net_liq_value is 0.0)
-            if net_liq_value:
-                allocation_weights[symbol] = pos.marketValue / net_liq_value
-            else:
-                allocation_weights[symbol] = 0.0
+            # Convert local market value -> EUR
+            fx_rate = self.get_fx_rate(ccy, 'EUR')
+            market_val_eur = market_val_local * fx_rate
 
-        # Update the object's attributes
-        self.tickers = list(tickers_set)
+            weight = market_val_eur / net_liq_value
+            allocation_weights[symbol] = weight
+            tickers_set.add(symbol)
+
+            print(f"[Positions] {symbol} in {ccy}, marketValue={market_val_local:.2f}, "
+                  f"converted={market_val_eur:.2f} EUR, weight={weight:.4f}")
+
+            # 3) Update self attributes
         self.allocation_weights = allocation_weights
-
-        # Remove duplicates, if any
+        self.tickers = list(tickers_set)
+        self.tickers = list(set(self.tickers))
         self.tickers = list(set(self.tickers))
 
     def analyze_betas(self, period_start: dt.datetime, period_end: dt.datetime,
@@ -317,7 +372,7 @@ class IBStockAnalyzer(IBClientLive):
 
         return corr_matrix
 
-    def compute_ticker_portfolio_correlation(self, weighted: bool = True) -> pd.Series:
+    def compute_ticker_portfolio_correlation(self, weighted: bool = False) -> pd.Series:
         """
         For each ticker in self.tickers, compute the correlation between its returns and the returns
         of the portfolio formed by all the other tickers in self.tickers.
