@@ -39,6 +39,7 @@ class IBStockAnalyzer(IBClientLive):
         self.allocation_weights = None
         self.get_positions = False
         self.portfolio_summary = {}
+        self.ib.errorEvent += self.my_error_handler
 
         if get_positions:
             self.get_positions = True
@@ -81,6 +82,14 @@ class IBStockAnalyzer(IBClientLive):
             print(f"No pickle file found at {filename}. Starting with empty data.")
             self.data = {}
 
+    def my_error_handler(self, reqId, errorCode, errorString, contract=None):
+        """
+        Custom handler that ignores specific errors (e.g. for Forex('USDEUR')).
+        """
+        if errorCode == 200 and 'USDEUR' in errorString:
+            return
+        print(f"IB Error {errorCode} (reqId {reqId}): {errorString}")
+
     def get_fx_rate(self, from_ccy: str, to_ccy: str, timeout: float = 0.5) -> float:
         """
         Retrieve the exchange rate from_ccy -> to_ccy using ib_insync.
@@ -103,7 +112,17 @@ class IBStockAnalyzer(IBClientLive):
             c.exchange = 'IDEALPRO'  # IB's main FX ECN
             return c
 
-        # 1) Try direct pair
+        # 1) Try reverse pair first, if it fails, we go to direct
+        rev_contract = forex_contract(to_ccy, from_ccy)
+        rev_ticker = self.ib.reqMktData(rev_contract, '', snapshot=True)
+
+        self.ib.sleep(timeout)
+
+        rev_rate = rev_ticker.close
+        if rev_rate and rev_rate > 0.0:
+            return 1.0 / rev_rate
+
+        # 2) Try direct pair
         direct_pair = from_ccy + to_ccy
         direct_contract = forex_contract(from_ccy, to_ccy)
         direct_ticker = self.ib.reqMktData(direct_contract, '', snapshot=True)
@@ -114,16 +133,6 @@ class IBStockAnalyzer(IBClientLive):
         direct_rate = direct_ticker.close
         if direct_rate and direct_rate > 0.0:
             return direct_rate
-
-        # 2) If direct pair fails, try reversed pair and invert
-        rev_contract = forex_contract(to_ccy, from_ccy)
-        rev_ticker = self.ib.reqMktData(rev_contract, '', snapshot=True)
-
-        self.ib.sleep(timeout)
-
-        rev_rate = rev_ticker.close
-        if rev_rate and rev_rate > 0.0:
-            return 1.0 / rev_rate
 
         # 3) Fallback
         print(f"[WARN] Could not get an FX rate for {from_ccy}->{to_ccy} from IB. Defaulting to 1.0")
