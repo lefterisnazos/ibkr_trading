@@ -279,8 +279,6 @@ class IBStockAnalyzer(IBClientLive):
 
             # 3) Update self attributes
         self.allocation_weights = allocation_weights
-        self.tickers = list(tickers_set)
-        self.tickers = list(set(self.tickers))
         self.tickers = list(set(self.tickers))
 
     def analyze_betas(self, period_start: dt.datetime, period_end: dt.datetime,
@@ -546,8 +544,8 @@ class IBStockAnalyzer(IBClientLive):
 
 tickers = ['QQQ','TSLA', 'SBUX', 'NBIS']
 reference = ['QQQ','SPY']
-period_start = dt.datetime(2025, 2, 1)
-period_end = dt.datetime(2025, 3, 20)
+period_start = dt.datetime(2025, 3, 1)
+period_end = dt.datetime(2025, 3, 27)
 anal = IBStockAnalyzer(tickers,reference, '1 day', client_id=26, get_positions=True)
 
 betas = anal.analyze_betas(period_start=period_start, period_end=period_end)
