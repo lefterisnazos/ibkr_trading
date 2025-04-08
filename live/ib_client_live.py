@@ -108,6 +108,7 @@ class IBClientLive:
             order = LimitOrder(side, quantity, limit_price)
         # etc. for Stop, StopLimit, etc.
 
+        contract = self.ib.qualifyContracts(contract)[0]
         trade = self.ib.placeOrder(contract, order)
         print(f"Placed {side} order for {quantity} shares of {contract.symbol} at {limit_price} (order: {order})")
         return trade

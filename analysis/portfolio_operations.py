@@ -248,7 +248,7 @@ class IBStockAnalyzer(IBClientLive):
         """
 
         # Update portfolio allocation weights and summary.
-        self.get_info_from_positions()
+        # self.get_info_from_positions()
 
         # Normalize side input and filter allocation weights.
         side_to_rebalance = side_to_rebalance.lower()
@@ -295,6 +295,8 @@ class IBStockAnalyzer(IBClientLive):
             symbol = pos.contract.symbol
 
             # Filter positions based on the side.
+            if symbol == 'SQQQ' or symbol == 'VXX':
+                continue
             if side_to_rebalance == "longs" and pos.position <= 0:
                 continue
             if side_to_rebalance == "shorts" and pos.position >= 0:
