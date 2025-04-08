@@ -90,7 +90,7 @@ class IBStockAnalyzer(IBClientLive):
             return
         print(f"IB Error {errorCode} (reqId {reqId}): {errorString}")
 
-    def get_fx_rate(self, from_ccy: str, to_ccy: str, timeout: float = 0.5) -> float:
+    def get_fx_rate(self, from_ccy: str, to_ccy: str, timeout: float = 1.5) -> float:
         """
         Retrieve the exchange rate from_ccy -> to_ccy using ib_insync.
         If direct pair is unavailable, tries reversed pair and inverts the rate.
@@ -138,67 +138,6 @@ class IBStockAnalyzer(IBClientLive):
         print(f"[WARN] Could not get an FX rate for {from_ccy}->{to_ccy} from IB. Defaulting to 1.0")
         return 1.0
 
-
-    def fetch_intraday_in_chunks(self, ticker: str, start: pd.Timestamp,
-                                 end: pd.Timestamp, bar_size: str = None,
-                                 chunk_size_request: int = 60) -> pd.DataFrame:
-        """
-        Fetch intraday data for 'ticker' from 'start' to 'end' in chunks.
-        """
-        if bar_size is None:
-            bar_size = self.bar_size
-
-        chunks = []
-        current_end = end
-        delta_days = (end - start).days
-        estimated_chunks = math.ceil(delta_days / chunk_size_request) if delta_days > 0 else 1
-        pbar = tqdm(total=estimated_chunks, desc=f"Intraday for {ticker}", unit="chunk", leave=True)
-
-        while current_end > start:
-            current_start = current_end - pd.Timedelta(days=chunk_size_request)
-            if current_start < start:
-                current_start = start
-
-            df_chunk = self.fetch_historical_data(
-                symbol=ticker,
-                start_date=current_start,
-                end_date=current_end,
-                bar_size=bar_size,
-                what_to_show='TRADES',
-                use_rth=True
-            )
-            chunks.append(df_chunk)
-
-            if not df_chunk.empty:
-                earliest_in_chunk = df_chunk.index.min().tz_localize(None)
-            else:
-                break
-
-            if earliest_in_chunk >= current_end:
-                break
-
-            current_end = earliest_in_chunk - pd.Timedelta(minutes=5)
-            pbar.update(1)
-            if current_start == start:
-                break
-
-        pbar.close()
-        all_intraday = pd.concat(chunks, axis=0)
-        all_intraday.sort_index(inplace=True)
-        all_intraday = all_intraday[~all_intraday.index.duplicated(keep='first')]
-
-        if not all_intraday.empty:
-            tz_key = all_intraday.index.tz
-            if tz_key is not None:
-                start_local = start.tz_localize(tz_key)
-                end_local = end.tz_localize(tz_key)
-            else:
-                start_local = start
-                end_local = end
-            return all_intraday.loc[(all_intraday.index >= start_local) &
-                                    (all_intraday.index <= end_local)]
-        else:
-            return pd.DataFrame()
 
     def get_data(self, period_start: dt.datetime, period_end: dt.datetime,
                  frequency: str = None, chunk_size_request: int = 30) -> None:
@@ -261,7 +200,12 @@ class IBStockAnalyzer(IBClientLive):
         allocation_weights = {}
         tickers_set = set()
 
+        self.currencies = {'EURUSD': None, 'EURGBP': None, 'GBPEUR': None, 'CNYEUR': None, ' EURCNY': None}
         for pos_item in portfolio:
+            if pos_item.contract.secType != 'STK':
+                print(f'ignored {pos_item.contract} for getting allocation weights')
+                continue
+
             symbol = pos_item.contract.symbol
             ccy = pos_item.contract.currency  # e.g. 'USD', 'EUR'
             market_val_local = pos_item.marketValue  # in ccy
@@ -280,6 +224,152 @@ class IBStockAnalyzer(IBClientLive):
             # 3) Update self attributes
         self.allocation_weights = allocation_weights
         self.tickers = list(set(self.tickers))
+
+    def rebalance_side(self, side_to_rebalance: str, integer_quantities=False):
+        """
+        Rebalance one side of the portfolio ("Longs" or "Shorts") by scaling each position.
+        The scaling factor is calculated as:
+
+           factor = (target allocation) / (current allocation)
+
+        This factor is then applied to each position:
+          new_qty = current_qty * factor,
+          order difference = new_qty - current_qty.
+
+        The function then prompts the user for the order type ("LMT" for limit or "MKT" for market).
+        If a limit order is requested, the limit price is determined as follows:
+          - For LONGS:
+              * BUY orders (increasing exposure): limit = ask * 1.001 (i.e. 0.1% above ask)
+              * SELL orders (reducing exposure): limit = bid * 0.999 (i.e. 0.1% below bid)
+          - For SHORTS:
+              * SELL orders (increasing short exposure): limit = bid * 0.999 (i.e. 0.1% below bid)
+              * BUY orders (reducing short exposure): limit = ask * 1.001 (i.e. 0.1% above ask)
+        Market orders (MKT) simply proceed without a price.
+        """
+
+        # Update portfolio allocation weights and summary.
+        self.get_info_from_positions()
+
+        # Normalize side input and filter allocation weights.
+        side_to_rebalance = side_to_rebalance.lower()
+        if side_to_rebalance == "longs":
+            relevant_allocs = {sym: w for sym, w in self.allocation_weights.items() if w > 0}
+            prompt_msg = "Enter desired new % net liquidity for LONG positions (e.g., 30 for 30%): "
+        elif side_to_rebalance == "shorts":
+            relevant_allocs = {sym: w for sym, w in self.allocation_weights.items() if w < 0}
+            prompt_msg = "Enter desired new % net liquidity for SHORT positions (e.g., 10 for 10%): "
+        else:
+            print("Invalid side specified. Please use 'Longs' or 'Shorts'.")
+            return
+
+        # Calculate current allocation for the selected side.
+        if side_to_rebalance == "longs":
+            current_alloc = sum(relevant_allocs.values())  # e.g., 0.50 for 50%
+        else:
+            # For shorts, use the absolute total of negative weights.
+            current_alloc = sum(abs(w) for w in relevant_allocs.values())
+
+        print(f"Current {side_to_rebalance.capitalize()} allocation: {current_alloc * 100:.2f}% of net liquidation.")
+
+        # Get target allocation percentage from the user.
+        try:
+            target_pct = float(input(prompt_msg))
+        except ValueError:
+            print("Invalid input for target percentage.")
+            return
+        target_alloc = target_pct / 100.0
+
+        # Compute the scaling factor.
+        factor = target_alloc / current_alloc
+        print(f"Scaling factor computed: {factor:.3f}")
+
+        # Ask the user for the order type: Market (MKT) or Limit (LMT)
+        order_type_input = input("Enter order type (MKT for Market, LMT for Limit): ").strip().upper()
+        if order_type_input not in ["MKT", "LMT"]:
+            print("Invalid order type specified. Defaulting to Market order.")
+            order_type_input = "MKT"
+
+        # Retrieve the current positions from IB.
+        positions = self.ib.portfolio()
+        for pos in positions:
+            symbol = pos.contract.symbol
+
+            # Filter positions based on the side.
+            if side_to_rebalance == "longs" and pos.position <= 0:
+                continue
+            if side_to_rebalance == "shorts" and pos.position >= 0:
+                continue
+
+            current_shares = pos.position  # positive for longs; negative for shorts.
+            new_qty_float = current_shares * factor
+            order_diff = new_qty_float - current_shares
+
+            # Skip if no significant adjustment is needed.
+            if abs(order_diff) < 1:
+                print(f"No significant adjustment for {symbol} (current shares: {current_shares}).")
+                continue
+
+            # Determine order direction based on order_diff.
+            if order_diff > 0:
+                order_side = "BUY"
+            else:
+                order_side = "SELL"
+            order_qty = int(round(abs(order_diff)))
+
+            # For limit orders, calculate a limit price; for market orders, leave as None.
+            if order_type_input == "LMT":
+                # Request a market data snapshot.
+                ticker = self.ib.reqMktData(pos.contract, '', snapshot=True)
+                self.ib.sleep(0.5)  # Wait briefly for data to come in.
+                if side_to_rebalance == "longs":
+                    if order_side == "BUY":
+                        # Increasing longs: set b uy  o rder below 0.1% of current bid
+                        current_bid = ticker.bid
+                        if current_bid is None or current_bid <= 0:
+                            print(f"Could not retrieve ask for {symbol}. Skipping order.")
+                            continue
+                        limit_price = current_bid * 0.999
+                        price_info = f"ask: {current_bid:.2f}"
+                    else:  # SELL
+                        # Reducing longs: sell at 0.1% above current ask
+                        current_ask = ticker.ask
+                        if current_ask is None or current_ask <= 0:
+                            print(f"Could not retrieve bid for {symbol}. Skipping order.")
+                            continue
+                        limit_price = current_ask * 1.001
+                        price_info = f"bid: {current_ask:.2f}"
+                else:  # side_to_rebalance == "shorts"
+                    if order_side == "SELL":
+                        # Increasing shorts: sell at 0.1% below current bid.
+                        current_ask = ticker.ask
+                        if current_ask is None or current_ask <= 0:
+                            print(f"Could not retrieve bid for {symbol}. Skipping order.")
+                            continue
+                        limit_price = current_ask * 1.001
+                        price_info = f"bid: {current_ask:.2f}"
+                    else:  # BUY
+                        # Reducing shorts: buy at 0.1% above current ask.
+                        current_bid = ticker.bid
+                        if current_bid is None or current_bid <= 0:
+                            print(f"Could not retrieve ask for {symbol}. Skipping order.")
+                            continue
+                        limit_price = current_bid * 0.999
+                        price_info = f"ask: {current_bid:.2f}"
+                print(
+                    f"Placing {order_side} (LMT) order for {order_qty} shares of {symbol} at limit price {limit_price:.2f} "
+                    f"({price_info}, current shares: {current_shares}, desired new shares: {new_qty_float:.2f}).")
+            else:
+                # Market order; no limit price is calculated.
+                limit_price = None
+                print(f"Placing {order_side} (MKT) order for {order_qty} shares of {symbol} "
+                      f"(current shares: {current_shares}, desired new shares: {new_qty_float:.2f}).")
+
+            # Place the order via the inherited order-placement method.
+            self.place_live_order(pos.contract, order_side, order_qty, order_type=order_type_input,
+                                  limit_price=limit_price)
+
+        print(f"Rebalancing of {side_to_rebalance.capitalize()} orders executed.")
+
 
     def analyze_betas(self, period_start: dt.datetime, period_end: dt.datetime,
                       frequency: str = None) -> pd.DataFrame:
@@ -544,12 +634,13 @@ class IBStockAnalyzer(IBClientLive):
 
 tickers = ['QQQ','TSLA', 'SBUX', 'NBIS']
 reference = ['QQQ','SPY']
-period_start = dt.datetime(2025, 3, 1)
+period_start = dt.datetime(2025, 2, 1)
 period_end = dt.datetime(2025, 3, 27)
 anal = IBStockAnalyzer(tickers,reference, '1 day', client_id=26, get_positions=True)
 
-betas = anal.analyze_betas(period_start=period_start, period_end=period_end)
-corr = anal.analyze_correlations(period_start=period_start, period_end=period_end)
-port_corr = anal.compute_ticker_portfolio_correlation(weighted=True)
-bench_corr = anal.compute_correlation_against_benchmarks(weighted=True)
+#betas = anal.analyze_betas(period_start=period_start, period_end=period_end)
+#corr = anal.analyze_correlations(period_start=period_start, period_end=period_end)
+#port_corr = anal.compute_ticker_portfolio_correlation(weighted=True)
+#bench_corr = anal.compute_correlation_against_benchmarks(weighted=True)
+anal.rebalance_side('longs')
 x=2

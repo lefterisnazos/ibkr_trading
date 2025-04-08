@@ -1,7 +1,7 @@
 import time
 import datetime as dt
 import pandas as pd
-from ib_insync import IB, Stock, util, Fill, Trade as IBTrade
+from ib_insync import IB, Stock, util, Fill, Trade as IBTrade, Contract
 import math
 from typing import Dict, List, Tuple, Optional
 from tqdm import tqdm
@@ -48,7 +48,7 @@ class IBClientLive:
         Connect to the IB TWS/Gateway using ib_insync.IB.
         """
         try:
-            self.ib.connect(host=self.host, port=self.port, clientId=self.client_id)
+            self.ib.connect(host=self.host, port=self.port, clientId=self.client_id, account=self.account)
             print("Connected to IB.")
         except Exception as e:
             print(f"Could not connect to IB: {e}")
@@ -96,7 +96,7 @@ class IBClientLive:
         """
         return self.ib.reqRealTimeBars(contract=contract, barSize=bar_size, whatToShow=what_to_show, useRTH=True)
 
-    def place_live_order(self, contract, side, quantity, order_type='MKT', limit_price=None):
+    def place_live_order(self, contract: Contract, side, quantity, order_type='MKT', limit_price=None):
         """
         Create and place an IB order. Returns ib_insync.Trade object.
         """
