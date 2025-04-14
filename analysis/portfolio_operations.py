@@ -177,51 +177,60 @@ class IBStockAnalyzer(IBClientLive):
         Fetches the current positions from IB, calculates each position's fraction
         of the account's Net Liquidation Value, stores them in self.allocation_weights,
         and updates self.tickers with any tickers not already in the list.
+
+        FX conversion rates for each distinct currency pair are calculated at most once.
         """
 
         # 1) Get the Net Liquidation Value
-        net_liq_value = 0.0
         summary = self.ib.accountSummary(account=self.account)
         net_liq_value = float(next(val for val in summary if val.tag == 'NetLiquidation').value)
         total_cash = float(next(val for val in summary if val.tag == 'TotalCashValue').value)
         gross_position_value = float(next(val for val in summary if val.tag == 'GrossPositionValue').value)
 
-        self.portfolio_summary = {'net_liquidation': net_liq_value,
-                                'total_cash': total_cash,
-                                'gross_position_value': gross_position_value}
+        self.portfolio_summary = {
+            'net_liquidation': net_liq_value,
+            'total_cash': total_cash,
+            'gross_position_value': gross_position_value
+        }
 
         # Safety check to avoid dividing by zero
         if net_liq_value <= 0:
             print("Warning: NetLiquidation value is zero or unavailable. Defaulting to 1.0.")
             net_liq_value = 1.0
 
-        # 2) Fetch positions
-        portfolio = self.ib.portfolio()  # list of (account, contract, pos, avgCost)   # Prepare a dictionary for allocation weights and a set for unique tickers
+        # 2) Prepare a cache dictionary for FX rates.
+        fx_rates_cache = {}
+
+        # 3) Fetch positions and compute allocation weights.
+        portfolio = self.ib.portfolio()  # list of (account, contract, pos, avgCost)
         allocation_weights = {}
         tickers_set = set()
 
-        self.currencies = {'EURUSD': None, 'EURGBP': None, 'GBPEUR': None, 'CNYEUR': None, ' EURCNY': None}
         for pos_item in portfolio:
             if pos_item.contract.secType != 'STK':
-                print(f'ignored {pos_item.contract} for getting allocation weights')
+                print(f'Ignored {pos_item.contract} for getting allocation weights')
                 continue
 
             symbol = pos_item.contract.symbol
             ccy = pos_item.contract.currency  # e.g. 'USD', 'EUR'
-            market_val_local = pos_item.marketValue  # in ccy
+            market_val_local = pos_item.marketValue  # local market value
 
-            # Convert local market value -> EUR
-            fx_rate = self.get_fx_rate(ccy, 'EUR')
+            # Use a tuple (from_currency, to_currency) as cache key.
+            fx_key = (ccy, 'EUR')
+            if fx_key not in fx_rates_cache:
+                fx_rates_cache[fx_key] = self.get_fx_rate(ccy, 'EUR')
+            fx_rate = fx_rates_cache[fx_key]
+
             market_val_eur = market_val_local * fx_rate
-
             weight = market_val_eur / net_liq_value
+
             allocation_weights[symbol] = weight
             tickers_set.add(symbol)
 
             print(f"[Positions] {symbol} in {ccy}, marketValue={market_val_local:.2f}, "
                   f"converted={market_val_eur:.2f} EUR, weight={weight:.4f}")
 
-            # 3) Update self attributes
+        # 4) Update self attributes.
         self.allocation_weights = allocation_weights
         self.tickers = list(set(self.tickers))
 
@@ -307,7 +316,7 @@ class IBStockAnalyzer(IBClientLive):
             order_diff = new_qty_float - current_shares
 
             # Skip if no significant adjustment is needed.
-            if abs(order_diff) < 1:
+            if abs(order_diff) < 0.1:
                 print(f"No significant adjustment for {symbol} (current shares: {current_shares}).")
                 continue
 
@@ -321,11 +330,12 @@ class IBStockAnalyzer(IBClientLive):
             # For limit orders, calculate a limit price; for market orders, leave as None.
             if order_type_input == "LMT":
                 # Request a market data snapshot.
-                ticker = self.ib.reqMktData(pos.contract, '', snapshot=True)
+                contract = self.ib.qualifyContracts(pos.contract)[0]
+                ticker = self.ib.reqMktData(contract, '', snapshot=True)
                 self.ib.sleep(0.5)  # Wait briefly for data to come in.
                 if side_to_rebalance == "longs":
                     if order_side == "BUY":
-                        # Increasing longs: set b uy  o rder below 0.1% of current bid
+                        # Increasing longs: set buy order below 0.1% of current bid
                         current_bid = ticker.bid
                         if current_bid is None or current_bid <= 0:
                             print(f"Could not retrieve ask for {symbol}. Skipping order.")

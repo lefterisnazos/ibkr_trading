@@ -11,7 +11,35 @@ from ib_insync import MarketOrder, LimitOrder, StopOrder, Order, BracketOrder, T
 
 ib = IBClientLive(account='DU8057891', client_id=30)
 ib.connect()
-start = dt.datetime(2025, 3, 1)
-end = dt.datetime(2025, 3, 17)
-data = ib.fetch_historical_data('THEON', start, end, bar_size='1 hour')
-x=2
+
+contract = Stock('AAPL', 'SMART', 'USD')
+
+# Request contract details
+details = ib.ib.reqContractDetails(contract)
+if details:
+    cd = details[0]
+    print("Regular Trading Hours:")
+    print(cd.tradingHours)
+    print("\nLiquid Hours:")
+    print(cd.liquidHours)
+else:
+    print("No contract details returned.")
+
+
+
+end_dt = dt.datetime.now().strftime("%Y%m%d %H:%M:%S")
+bars = ib.ib.reqHistoricalData(
+    contract=contract,
+    endDateTime=end_dt,
+    durationStr="3 D",
+    barSizeSetting="1 min",
+    whatToShow="TRADES",
+    useRTH=False,    # Request data for the full day including extended hours
+    formatDate=1
+)
+
+if bars:
+    df = ib.util.df(bars)
+    print(df.tail())
+else:
+    print("No bars returned. Extended hours data may not be available.")

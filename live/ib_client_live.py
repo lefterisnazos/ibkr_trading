@@ -5,6 +5,7 @@ from ib_insync import IB, Stock, util, Fill, Trade as IBTrade, Contract
 import math
 from typing import Dict, List, Tuple, Optional
 from tqdm import tqdm
+import numpy as np
 
 from ib_insync import MarketOrder, LimitOrder, StopOrder, Order, BracketOrder, Trade, Position
 
@@ -105,7 +106,7 @@ class IBClientLive:
         elif order_type == 'LMT':
             if limit_price is None:
                 raise ValueError("limit_price must be specified for a limit order.")
-            order = LimitOrder(side, quantity, limit_price)
+            order = LimitOrder(side, quantity, np.round(limit_price,2))
         # etc. for Stop, StopLimit, etc.
 
         contract = self.ib.qualifyContracts(contract)[0]
