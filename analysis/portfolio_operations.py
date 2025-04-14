@@ -325,7 +325,7 @@ class IBStockAnalyzer(IBClientLive):
                 order_side = "BUY"
             else:
                 order_side = "SELL"
-            order_qty = int(round(abs(order_diff)))
+            order_qty = abs(order_diff)
 
             # For limit orders, calculate a limit price; for market orders, leave as None.
             if order_type_input == "LMT":

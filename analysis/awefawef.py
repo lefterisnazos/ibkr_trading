@@ -12,34 +12,33 @@ from ib_insync import MarketOrder, LimitOrder, StopOrder, Order, BracketOrder, T
 ib = IBClientLive(account='DU8057891', client_id=30)
 ib.connect()
 
-contract = Stock('AAPL', 'SMART', 'USD')
+import math
+from ib_insync import IB, Stock, LimitOrder
 
-# Request contract details
-details = ib.ib.reqContractDetails(contract)
-if details:
-    cd = details[0]
-    print("Regular Trading Hours:")
-    print(cd.tradingHours)
-    print("\nLiquid Hours:")
-    print(cd.liquidHours)
-else:
-    print("No contract details returned.")
+# Define an error handling callback function.
+def error_handler(reqId, errorCode, errorString, advancedOrderRejectJson):
+    if "fractional" in errorString.lower():
+        print("Fractional error detected:", errorString)
 
+# Create an IB instance and attach the error event handler.
+ib = IB()
+ib.errorEvent += error_handler
 
+# Connect to IBKR. Adjust host, port, and clientId as necessary.
+ib.connect('127.0.0.1', 7497, clientId=33)
 
-end_dt = dt.datetime.now().strftime("%Y%m%d %H:%M:%S")
-bars = ib.ib.reqHistoricalData(
-    contract=contract,
-    endDateTime=end_dt,
-    durationStr="3 D",
-    barSizeSetting="1 min",
-    whatToShow="TRADES",
-    useRTH=False,    # Request data for the full day including extended hours
-    formatDate=1
-)
+# Define a stock contract for AAPL.
+contract = Stock('THEON', 'SMART', 'EUR')
 
-if bars:
-    df = ib.util.df(bars)
-    print(df.tail())
-else:
-    print("No bars returned. Extended hours data may not be available.")
+# Create a limit order with a fractional quantity.
+fractionQuantity = 1.5  # Fractional share quantity
+order = LimitOrder('BUY', fractionQuantity, 24.5)
+
+# Place the order.
+trade = ib.placeOrder(contract, order)
+
+# Sleep a few seconds to allow any asynchronous error messages to be delivered.
+ib.sleep(3)
+
+# Disconnect after processing.
+ib.disconnect()
