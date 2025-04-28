@@ -300,11 +300,12 @@ class IBStockAnalyzer(IBClientLive):
 
         # Retrieve the current positions from IB.
         positions = self.ib.portfolio()
+        symbol_exceptions = ['SQQQ', 'VXX', 'GLD']  # symbols that dont correspond to long/short exposure abstract. sqqq included cause it's a pseudolong, while it's short
         for pos in positions:
             symbol = pos.contract.symbol
 
             # Filter positions based on the side.
-            if symbol == 'SQQQ' or symbol == 'VXX':
+            if symbol in symbol_exceptions:
                 continue
             if side_to_rebalance == "longs" and pos.position <= 0:
                 continue
